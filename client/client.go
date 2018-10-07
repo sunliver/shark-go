@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/pkg/profile"
 	"github.com/sunliver/shark-go/client/localclient"
 
 	log "github.com/sirupsen/logrus"
@@ -29,9 +28,9 @@ func main() {
 	}
 	log.SetLevel(log.Level(loglevel))
 
-	if cpuprofile {
-		defer profile.Start().Stop()
-	}
+	// if cpuprofile {
+	// 	defer profile.Start().Stop()
+	// }
 
 	// addr = "localhost"
 	// rp = 12306
