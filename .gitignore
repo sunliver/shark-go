@@ -1,3 +1,4 @@
 pkg
 bin
 .vscode/
+.DS_Store
