@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/satori/go.uuid"
+	uuid "github.com/satori/go.uuid"
 	log "github.com/sirupsen/logrus"
 	"github.com/sunliver/shark-go/protocol"
 	"github.com/sunliver/shark-go/utils"
@@ -35,9 +35,9 @@ type Client struct {
 	readOBs map[uuid.UUID]func(data *protocol.BlockData, err error)
 	Status  int
 	Lasterr error
-	mutex   *sync.Mutex
-	passwd  []byte
+	mutex   sync.Mutex
 	crypto  *utils.Crypto
+	rlsOnce sync.Once
 }
 
 // RemoteProxyConf configuration of remote server
@@ -56,8 +56,7 @@ var errClose = errors.New("localclient: closed")
 // tcp connection
 func initClient(conf RemoteProxyConf) (*Client, error) {
 	c := &Client{
-		ID:    uuid.NewV4(),
-		mutex: &sync.Mutex{},
+		ID: uuid.NewV4(),
 	}
 	c.readOBs = make(map[uuid.UUID]func(data *protocol.BlockData, err error))
 
@@ -120,12 +119,12 @@ func (c *Client) handshake() error {
 		return c.Lasterr
 	}
 
-	c.passwd = []byte(protocol.NewGUID().String())
+	passwd := []byte(protocol.NewGUID().String())
 
 	if _, err := c.conn.Write(protocol.Marshal(&protocol.BlockData{
 		ID:   protocol.NewGUID(),
 		Type: protocol.ConstBlockTypeHandShakeResponse,
-		Data: c.passwd,
+		Data: passwd,
 	})); err != nil {
 		log.Errorf("[Client %v] send handshake resp failed, err: %v", c.ID, err)
 		c.Lasterr = err
@@ -144,7 +143,7 @@ func (c *Client) handshake() error {
 		return c.Lasterr
 	}
 
-	c.crypto = utils.NewCrypto(c.passwd)
+	c.crypto = utils.NewCrypto(passwd)
 
 	return nil
 }
@@ -250,7 +249,7 @@ func (c *Client) UnRegisterObserver(uuid uuid.UUID) {
 
 // release notify observers I'm out
 func (c *Client) release() {
-	if c.Status != constStatusClosed {
+	c.rlsOnce.Do(func() {
 		c.Lasterr = errClose
 		for id, ob := range c.readOBs {
 			log.Debugf("[Client %v] %v i'm closing", c.ID, id)
@@ -259,6 +258,9 @@ func (c *Client) release() {
 		c.readOBs = nil
 		c.conn.Close()
 		c.Status = constStatusClosed
+	})
+	if c.Status != constStatusClosed {
+
 	}
 	log.Debugf("[Client %v] client is released", c.ID)
 }

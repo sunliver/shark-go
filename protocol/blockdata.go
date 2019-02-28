@@ -7,10 +7,11 @@ import (
 	"fmt"
 	"hash/crc32"
 
-	"github.com/satori/go.uuid"
+	uuid "github.com/satori/go.uuid"
 )
 
 type BlockData struct {
+	// TODO XXX change uuid.UUID to []byte
 	ID          uuid.UUID
 	Type        byte
 	BlockNum    uint32
