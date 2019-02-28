@@ -7,9 +7,10 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/satori/go.uuid"
+	uuid "github.com/satori/go.uuid"
 	log "github.com/sirupsen/logrus"
 	"github.com/sunliver/shark/protocol"
 	"github.com/sunliver/shark/utils"
@@ -27,17 +28,17 @@ const (
 	constStatusClosed
 )
 
-// relay struct of local client
+// relay struct
 // connect with remote server
 type relay struct {
 	ID      uuid.UUID
 	conn    *net.TCPConn
-	readOBs map[uuid.UUID]func(data *protocol.BlockData, err error)
 	Status  int
 	Lasterr error
 	mutex   sync.Mutex
+	readOBs map[uuid.UUID]*agent
 	crypto  *utils.Crypto
-	rlsOnce sync.Once
+	rls     sync.Once
 }
 
 // RemoteProxyConf configuration of remote server
@@ -50,7 +51,7 @@ func (conf *RemoteProxyConf) String() string {
 	return fmt.Sprintf("%v:%v", conf.RemoteServer, conf.RemotePort)
 }
 
-var errClose = errors.New("localclient: closed")
+var errClose = errors.New("relay: closed")
 
 // initClient returns client to connect proxy server;
 // tcp connection
@@ -58,7 +59,7 @@ func initClient(conf RemoteProxyConf) (*relay, error) {
 	c := &relay{
 		ID: uuid.NewV4(),
 	}
-	c.readOBs = make(map[uuid.UUID]func(data *protocol.BlockData, err error))
+	c.readOBs = make(map[uuid.UUID]*agent)
 
 	tcpAddr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", conf.RemoteServer, conf.RemotePort))
 	if err != nil {
@@ -198,13 +199,13 @@ func (c *relay) beginRead() {
 				}
 
 				if ob, ok := c.readOBs[uid]; ok {
-					ob(nil, errClose)
+					go ob.onRead(atomic.AddUint64(ob.ticket, 1)-1, nil, errClose)
 				}
 			}
 		}
 
 		if ob, ok := c.readOBs[blockData.ID]; ok {
-			ob(blockData, nil)
+			go ob.onRead(atomic.AddUint64(ob.ticket, 1)-1, blockData, nil)
 		}
 	}
 }
@@ -228,39 +229,38 @@ func (c *relay) Write(blockdata *protocol.BlockData) (int, error) {
 }
 
 // RegisterObserver when receiving msgs, client will decode it and give to interested observers
-func (c *relay) RegisterObserver(uuid uuid.UUID, f func(data *protocol.BlockData, err error)) error {
-	if _, ok := c.readOBs[uuid]; ok {
-		return fmt.Errorf("[relay %v] duplicate observer, %v", c.ID, uuid)
-	}
+func (c *relay) RegisterObserver(a *agent) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	c.readOBs[uuid] = f
+	if _, ok := c.readOBs[a.ID]; ok {
+		return fmt.Errorf("[relay %v] duplicate observer, %v", c.ID, a)
+	}
+
+	c.readOBs[a.ID] = a
 	return nil
 }
 
 // UnRegisterObserver stop receive msg from client
-func (c *relay) UnRegisterObserver(uuid uuid.UUID) {
+func (c *relay) UnRegisterObserver(a *agent) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	delete(c.readOBs, uuid)
+	delete(c.readOBs, a.ID)
 }
 
 // release notify observers I'm out
 func (c *relay) release() {
-	c.rlsOnce.Do(func() {
+	c.rls.Do(func() {
 		c.Lasterr = errClose
 		for id, ob := range c.readOBs {
 			log.Debugf("[relay %v] %v i'm closing", c.ID, id)
-			ob(nil, errClose)
+			ob.onRead(atomic.AddUint64(ob.ticket, 1)-1, nil, errClose)
 		}
 		c.readOBs = nil
 		c.conn.Close()
 		c.Status = constStatusClosed
 	})
-	if c.Status != constStatusClosed {
 
-	}
 	log.Debugf("[relay %v] client is released", c.ID)
 }

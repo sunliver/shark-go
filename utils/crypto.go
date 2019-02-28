@@ -5,7 +5,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 
-	"github.com/satori/go.uuid"
+	uuid "github.com/satori/go.uuid"
 	"golang.org/x/crypto/scrypt"
 )
 

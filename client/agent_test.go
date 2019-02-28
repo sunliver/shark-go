@@ -8,8 +8,8 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/sunliver/shark/protocol"
 	"github.com/sunliver/shark/client/helper"
+	"github.com/sunliver/shark/protocol"
 )
 
 func TestAgentOK(t *testing.T) {
@@ -62,9 +62,9 @@ func TestAgentOK(t *testing.T) {
 		// {
 		// 	buf := make([]byte, len(constHTTPSuccess))
 		// 	if n, err := io.ReadFull(server, buf); err != nil || n != len(buf) {
-		// 		t.Fatal(err)
+		// 		T.Fatal(err)
 		// 	}
-		// 	assert.Equal(t, constHTTPSuccess, string(buf))
+		// 	assert.Equal(T, constHTTPSuccess, string(buf))
 		// }
 
 		{

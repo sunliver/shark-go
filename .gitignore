@@ -2,5 +2,5 @@ pkg
 bin
 .vscode/
 .DS_Store
-shark-go
+shark
 .idea/

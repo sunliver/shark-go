@@ -2,10 +2,11 @@ package cmd
 
 import (
 	"fmt"
+	"net"
+
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/sunliver/shark/client"
-	"net"
 )
 
 var clp int

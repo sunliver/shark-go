@@ -98,6 +98,6 @@ func (p *httpProxy) handShakeResp() []byte {
 	return []byte(constHTTPSuccess)
 }
 
-func (p *httpProxy) t() int {
+func (p *httpProxy) T() int {
 	return p.pType
 }

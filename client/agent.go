@@ -1,18 +1,15 @@
 package client
 
 import (
-	"github.com/satori/go.uuid"
-	"github.com/sunliver/shark/protocol"
 	"io"
 	"net"
+	"runtime"
+	"sync"
+	"sync/atomic"
 
+	uuid "github.com/satori/go.uuid"
 	log "github.com/sirupsen/logrus"
-)
-
-// conn status
-const (
-	constStatusHandShake = iota
-	constStatusConnected
+	"github.com/sunliver/shark/protocol"
 )
 
 // agent handle connection from local
@@ -23,7 +20,9 @@ type agent struct {
 	conn      net.Conn
 	proxy     proxy
 	writechan chan *protocol.BlockData
-	status    int
+	rls       sync.Once
+	ticket    *uint64
+	done      *uint64
 }
 
 const (
@@ -38,7 +37,7 @@ type proxy interface {
 	handShake(conn net.Conn) (blockdata *protocol.BlockData, read []byte, err error)
 	// HandShakeResp returns proxy handshake resp msg
 	handShakeResp() []byte
-	t() int
+	T() int
 }
 
 type hostData struct {
@@ -48,7 +47,6 @@ type hostData struct {
 
 // ServerProxy handle proxy connections
 func ServerProxy(p string, conn net.Conn, c *relay) {
-	// TODO socks support
 	p = "http"
 	pc := &agent{
 		ID:        protocol.NewGUID(),
@@ -56,9 +54,11 @@ func ServerProxy(p string, conn net.Conn, c *relay) {
 		c:         c,
 		conn:      conn,
 		writechan: make(chan *protocol.BlockData),
+		ticket:    new(uint64),
+		done:      new(uint64),
 	}
 
-	for pc.c.RegisterObserver(pc.ID, pc.onRead) != nil {
+	for pc.c.RegisterObserver(pc) != nil {
 		pc.ID = protocol.NewGUID()
 	}
 	pc.start()
@@ -86,7 +86,7 @@ func (pc *agent) start() {
 	data := <-pc.writechan
 
 	if data.Type == protocol.ConstBlockTypeConnected {
-		if pc.proxy.t() == constProxyTypeHTTPS {
+		if pc.proxy.T() == constProxyTypeHTTPS {
 			if err := pc.writeToLocal(pc.proxy.handShakeResp()); err != nil {
 				pc.release()
 				return
@@ -119,11 +119,11 @@ func (pc *agent) start() {
 }
 
 func (pc *agent) release() {
-	if pc.status != constStatusClosed {
-		pc.c.UnRegisterObserver(pc.ID)
+	pc.rls.Do(func() {
+		pc.c.UnRegisterObserver(pc)
 		pc.conn.Close()
-		pc.status = constStatusClosed
-	}
+	})
+
 	log.Infof("[agent] %v released", pc.ID)
 }
 
@@ -132,11 +132,6 @@ func (pc *agent) beginRead() {
 	defer pc.release()
 
 	for {
-		// if err := pc.conn.SetReadDeadline(time.Now().Add(constReadTimeoutS)); err != nil {
-		// 	log.Warnf("[agent] read timeout, err: %v", err)
-		// 	break
-		// }
-
 		buf := make([]byte, 4096)
 		n, err := io.ReadAtLeast(pc.conn, buf, 1)
 		if err != nil {
@@ -155,14 +150,22 @@ func (pc *agent) beginRead() {
 	}
 }
 
-func (pc *agent) onRead(data *protocol.BlockData, err error) {
+func (pc *agent) onRead(ticket uint64, data *protocol.BlockData, err error) {
+	for !atomic.CompareAndSwapUint64(pc.done, ticket, ticket) {
+		runtime.Gosched()
+	}
+
 	if err != nil {
 		log.Infof("[agent] client is closed, err: %v", err)
 		pc.release()
 		return
 	}
 
+	log.Debugf("agent: %v, ticket: %v\n", pc.ID, ticket)
+
 	pc.writechan <- data
+
+	atomic.AddUint64(pc.done, 1)
 }
 
 func (pc *agent) write() {
