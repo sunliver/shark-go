@@ -4,8 +4,7 @@ import (
 	"fmt"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"github.com/sunliver/shark-go/client/localclient"
-	"github.com/sunliver/shark-go/client/proxy"
+	"github.com/sunliver/shark/client"
 	"net"
 )
 
@@ -44,7 +43,7 @@ var clientCmd = &cobra.Command{
 		// lp = 10087
 		// protocol = "http"
 		runServer(proxyServerConf{
-			RemoteProxyConf: localclient.RemoteProxyConf{
+			RemoteProxyConf: client.RemoteProxyConf{
 				// RemotePort:   8654,
 				// RemoteServer: "shark.norgerman.com",
 				RemotePort:   crp,
@@ -56,17 +55,14 @@ var clientCmd = &cobra.Command{
 	},
 }
 
-type proxyServer struct {
-}
-
 type proxyServerConf struct {
-	localclient.RemoteProxyConf
+	client.RemoteProxyConf
 	Port     int
 	Protocol string
 }
 
 func runServer(conf proxyServerConf) error {
-	m := localclient.NewManager(conf.RemoteProxyConf, ccoreSz)
+	m := client.NewManager(conf.RemoteProxyConf, ccoreSz)
 
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", conf.Port))
 	if err != nil {
@@ -89,7 +85,7 @@ func runServer(conf proxyServerConf) error {
 			continue
 		}
 
-		go proxy.ServerProxy(conf.Protocol, conn, c)
+		go client.ServerProxy(conf.Protocol, conn, c)
 	}
 
 	// TODO gracfully shutdown

@@ -1,4 +1,4 @@
-package proxy
+package client
 
 import (
 	"io"
@@ -8,12 +8,11 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/sunliver/shark-go/client/helper"
-	"github.com/sunliver/shark-go/client/localclient"
-	"github.com/sunliver/shark-go/protocol"
+	"github.com/sunliver/shark/protocol"
+	"github.com/sunliver/shark/client/helper"
 )
 
-func TestProxyClientOK(t *testing.T) {
+func TestAgentOK(t *testing.T) {
 	log.SetLevel(log.DebugLevel)
 
 	cases := make(map[string]string)
@@ -27,11 +26,11 @@ func TestProxyClientOK(t *testing.T) {
 		uuid := protocol.NewGUID()
 		go helper.NewEchoServer(t, port, uuid)
 
-		conf := localclient.RemoteProxyConf{
+		conf := RemoteProxyConf{
 			RemoteServer: "localhost",
 			RemotePort:   port,
 		}
-		localclient, err := localclient.GetSingleClient(conf)
+		localclient, err := GetSingleClient(conf)
 		if err != nil {
 			t.Fatal("get localclient failed")
 		}
@@ -46,7 +45,7 @@ func TestProxyClientOK(t *testing.T) {
 			server.Write([]byte(k))
 		}()
 
-		pc := &proxyClient{
+		pc := &agent{
 			ID:        protocol.NewGUID(),
 			proxy:     &httpProxy{},
 			c:         localclient,

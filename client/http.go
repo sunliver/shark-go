@@ -1,4 +1,4 @@
-package proxy
+package client
 
 import (
 	"encoding/json"
@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	log "github.com/sirupsen/logrus"
-	"github.com/sunliver/shark-go/protocol"
+	"github.com/sunliver/shark/protocol"
 )
 
 const (
@@ -98,6 +98,6 @@ func (p *httpProxy) handShakeResp() []byte {
 	return []byte(constHTTPSuccess)
 }
 
-func (p *httpProxy) proxyType() int {
+func (p *httpProxy) t() int {
 	return p.pType
 }

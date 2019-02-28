@@ -1,4 +1,4 @@
-package proxy
+package client
 
 import (
 	"encoding/json"
@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/sunliver/shark-go/protocol"
+	"github.com/sunliver/shark/protocol"
 )
 
 func initConn(msg string) net.Conn {

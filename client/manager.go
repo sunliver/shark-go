@@ -1,4 +1,4 @@
-package localclient
+package client
 
 import (
 	"container/list"
@@ -32,25 +32,25 @@ func NewManager(conf RemoteProxyConf, coreSz int) *Manager {
 	return m
 }
 
-func GetSingleClient(conf RemoteProxyConf) (*Client, error) {
+func GetSingleClient(conf RemoteProxyConf) (*relay, error) {
 	return initClient(conf)
 }
 
 // GetClient return a localclient which is ready to recv connections
-func (m *Manager) GetClient() *Client {
+func (m *Manager) GetClient() *relay {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	var c *Client
+	var c *relay
 
 	for m.clients.Len() > 0 {
 		e := m.clients.Front()
-		if e.Value == nil || e.Value.(*Client).Status == constStatusClosed {
+		if e.Value == nil || e.Value.(*relay).Status == constStatusClosed {
 			m.clients.Remove(e)
 			continue
 		} else {
 			m.clients.MoveToBack(e)
-			c = e.Value.(*Client)
+			c = e.Value.(*relay)
 			break
 		}
 	}

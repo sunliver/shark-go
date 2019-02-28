@@ -1,4 +1,4 @@
-module github.com/sunliver/shark-go
+module github.com/sunliver/shark
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect

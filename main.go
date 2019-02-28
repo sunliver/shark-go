@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/sunliver/shark-go/cmd"
+	"github.com/sunliver/shark/cmd"
 )
 
 func main() {

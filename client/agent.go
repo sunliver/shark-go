@@ -1,13 +1,10 @@
-package proxy
+package client
 
 import (
+	"github.com/satori/go.uuid"
+	"github.com/sunliver/shark/protocol"
 	"io"
 	"net"
-	"time"
-
-	uuid "github.com/satori/go.uuid"
-	client "github.com/sunliver/shark-go/client/localclient"
-	"github.com/sunliver/shark-go/protocol"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -16,23 +13,18 @@ import (
 const (
 	constStatusHandShake = iota
 	constStatusConnected
-	constStatusClosed
 )
 
-// proxyClient handle connection from local
-// send messages via localclient
-type proxyClient struct {
+// agent handle connection from local
+// send messages via relay
+type agent struct {
 	ID        uuid.UUID
-	c         *client.Client
+	c         *relay
 	conn      net.Conn
 	proxy     proxy
 	writechan chan *protocol.BlockData
 	status    int
 }
-
-const (
-	constReadTimeoutS = time.Second * 60
-)
 
 const (
 	constProxyTypeHTTP = iota
@@ -46,7 +38,7 @@ type proxy interface {
 	handShake(conn net.Conn) (blockdata *protocol.BlockData, read []byte, err error)
 	// HandShakeResp returns proxy handshake resp msg
 	handShakeResp() []byte
-	proxyType() int
+	t() int
 }
 
 type hostData struct {
@@ -55,10 +47,10 @@ type hostData struct {
 }
 
 // ServerProxy handle proxy connections
-func ServerProxy(p string, conn net.Conn, c *client.Client) {
+func ServerProxy(p string, conn net.Conn, c *relay) {
 	// TODO socks support
 	p = "http"
-	pc := &proxyClient{
+	pc := &agent{
 		ID:        protocol.NewGUID(),
 		proxy:     &httpProxy{},
 		c:         c,
@@ -72,20 +64,20 @@ func ServerProxy(p string, conn net.Conn, c *client.Client) {
 	pc.start()
 }
 
-// start proxyClient start accept requests
-func (pc *proxyClient) start() {
+// start agent start accept requests
+func (pc *agent) start() {
 	blockdata, remain, err := pc.proxy.handShake(pc.conn)
 	if err != nil && err != errHTTPDegrade {
-		log.Errorf("[proxyClient] get proxy handshake msg failed, err: %v", err)
+		log.Errorf("[agent] get proxy handshake msg failed, err: %v", err)
 		pc.release()
 		return
 	}
 
-	log.Infof("[proxyClient] send handshake msg, %v", string(blockdata.Data))
+	log.Infof("[agent] send handshake msg, %v", string(blockdata.Data))
 
 	blockdata.ID = pc.ID
 	if _, err := pc.c.Write(blockdata); err != nil {
-		log.Warnf("[proxyClient] send handshake msg failed, err: %v", err)
+		log.Warnf("[agent] send handshake msg failed, err: %v", err)
 		pc.release()
 		return
 	}
@@ -94,19 +86,19 @@ func (pc *proxyClient) start() {
 	data := <-pc.writechan
 
 	if data.Type == protocol.ConstBlockTypeConnected {
-		if pc.proxy.proxyType() == constProxyTypeHTTPS {
+		if pc.proxy.t() == constProxyTypeHTTPS {
 			if err := pc.writeToLocal(pc.proxy.handShakeResp()); err != nil {
 				pc.release()
 				return
 			}
-			log.Infof("[proxyClient] write handshake resp")
+			log.Infof("[agent] write handshake resp")
 		}
 	} else if data.Type == protocol.ConstBlockTypeConnectFailed {
-		log.Infof("[proxyClient] recv connect failed, %s", data)
+		log.Infof("[agent] recv connect failed, %s", data)
 		pc.release()
 		return
 	} else {
-		log.Errorf("[proxyClient] unknown data, %v:%v:%v:%v", blockdata.ID, blockdata.Type, blockdata.BlockNum, blockdata.Length)
+		log.Errorf("[agent] unknown data, %v:%v:%v:%v", blockdata.ID, blockdata.Type, blockdata.BlockNum, blockdata.Length)
 		pc.release()
 		return
 	}
@@ -117,7 +109,7 @@ func (pc *proxyClient) start() {
 		Type: protocol.ConstBlockTypeData,
 		Data: remain,
 	}); err != nil {
-		log.Errorf("[proxyClient] send http msg failed, err: %v", err)
+		log.Errorf("[agent] send http msg failed, err: %v", err)
 		pc.release()
 		return
 	}
@@ -126,29 +118,29 @@ func (pc *proxyClient) start() {
 	go pc.write()
 }
 
-func (pc *proxyClient) release() {
+func (pc *agent) release() {
 	if pc.status != constStatusClosed {
 		pc.c.UnRegisterObserver(pc.ID)
 		pc.conn.Close()
 		pc.status = constStatusClosed
 	}
-	log.Infof("[proxyClient] %v released", pc.ID)
+	log.Infof("[agent] %v released", pc.ID)
 }
 
-func (pc *proxyClient) beginRead() {
-	log.Debugf("[proxyClient] %v begin read", pc.ID)
+func (pc *agent) beginRead() {
+	log.Debugf("[agent] %v begin read", pc.ID)
 	defer pc.release()
 
 	for {
 		// if err := pc.conn.SetReadDeadline(time.Now().Add(constReadTimeoutS)); err != nil {
-		// 	log.Warnf("[proxyClient] read timeout, err: %v", err)
+		// 	log.Warnf("[agent] read timeout, err: %v", err)
 		// 	break
 		// }
 
 		buf := make([]byte, 4096)
 		n, err := io.ReadAtLeast(pc.conn, buf, 1)
 		if err != nil {
-			log.Infof("[proxyClient] read from local failed, err: %v", err)
+			log.Infof("[agent] read from local failed, err: %v", err)
 			break
 		}
 
@@ -157,15 +149,15 @@ func (pc *proxyClient) beginRead() {
 			Type: protocol.ConstBlockTypeData,
 			Data: buf[:n],
 		}); err != nil {
-			log.Warnf("[proxyClient] write data to remote failed, err: %v", err)
+			log.Warnf("[agent] write data to remote failed, err: %v", err)
 			break
 		}
 	}
 }
 
-func (pc *proxyClient) onRead(data *protocol.BlockData, err error) {
+func (pc *agent) onRead(data *protocol.BlockData, err error) {
 	if err != nil {
-		log.Infof("[proxyClient] client is closed, err: %v", err)
+		log.Infof("[agent] client is closed, err: %v", err)
 		pc.release()
 		return
 	}
@@ -173,8 +165,8 @@ func (pc *proxyClient) onRead(data *protocol.BlockData, err error) {
 	pc.writechan <- data
 }
 
-func (pc *proxyClient) write() {
-	log.Debugf("[proxyClient] %v begin write", pc.ID)
+func (pc *agent) write() {
+	log.Debugf("[agent] %v begin write", pc.ID)
 	defer pc.release()
 	defer func() {
 		if err := recover(); err != nil {
@@ -194,11 +186,11 @@ func (pc *proxyClient) write() {
 	}
 }
 
-func (pc *proxyClient) writeToLocal(b []byte) error {
+func (pc *agent) writeToLocal(b []byte) error {
 	for {
 		n, err := pc.conn.Write(b)
 		if err != nil {
-			log.Warnf("[proxyClient] write data to local failed, err: %v", err)
+			log.Warnf("[agent] write data to local failed, err: %v", err)
 			return err
 		}
 		if n < len(b) {

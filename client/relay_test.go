@@ -1,12 +1,12 @@
-package localclient
+package client
 
 import (
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/sunliver/shark-go/client/helper"
-	"github.com/sunliver/shark-go/protocol"
+	"github.com/sunliver/shark/client/helper"
+	"github.com/sunliver/shark/protocol"
 )
 
 func TestClientOK(t *testing.T) {

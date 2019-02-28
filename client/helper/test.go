@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	uuid "github.com/satori/go.uuid"
-	"github.com/sunliver/shark-go/protocol"
-	"github.com/sunliver/shark-go/utils"
+	"github.com/sunliver/shark/protocol"
+	"github.com/sunliver/shark/utils"
 )
 
 func NewEchoServer(t *testing.T, port int, uuid uuid.UUID) {
