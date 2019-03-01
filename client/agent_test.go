@@ -51,9 +51,11 @@ func TestAgentOK(t *testing.T) {
 			c:         localclient,
 			conn:      client,
 			writechan: make(chan *protocol.BlockData),
+			ticket:    new(uint64),
+			done:      new(uint64),
 		}
 
-		for pc.c.RegisterObserver(pc.ID, pc.onRead) != nil {
+		for pc.c.RegisterObserver(pc) != nil {
 			pc.ID = protocol.NewGUID()
 		}
 

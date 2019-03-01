@@ -26,12 +26,6 @@ func TestClientOK(t *testing.T) {
 		t.FailNow()
 	}
 
-	client.RegisterObserver(uuid, func(data *protocol.BlockData, err error) {
-		if err == nil {
-			t.Logf("receive msg: %v", string(data.Data))
-		}
-	})
-
 	client.Write(&protocol.BlockData{
 		ID:   uuid,
 		Type: protocol.ConstBlockTypeData,
@@ -45,6 +39,5 @@ func TestClientOK(t *testing.T) {
 
 	time.Sleep(time.Millisecond * 100)
 
-	client.UnRegisterObserver(uuid)
 	client.release()
 }
