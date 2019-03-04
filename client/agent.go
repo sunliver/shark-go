@@ -161,10 +161,7 @@ func (pc *agent) onRead(ticket uint64, data *block.BlockData, err error) {
 		return
 	}
 
-	log.Debugf("agent: %v, ticket: %v\n", pc.ID, ticket)
-
 	pc.writechan <- data
-
 	atomic.AddUint64(pc.done, 1)
 }
 
