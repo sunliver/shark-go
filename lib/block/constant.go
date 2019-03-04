@@ -1,4 +1,4 @@
-package protocol
+package block
 
 // block types
 const (

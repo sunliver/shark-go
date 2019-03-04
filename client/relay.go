@@ -10,10 +10,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/sunliver/shark/lib/crypto"
+
 	uuid "github.com/satori/go.uuid"
 	log "github.com/sirupsen/logrus"
-	"github.com/sunliver/shark/protocol"
-	"github.com/sunliver/shark/utils"
+	"github.com/sunliver/shark/lib/block"
 )
 
 const (
@@ -37,7 +38,7 @@ type relay struct {
 	Lasterr error
 	mutex   sync.Mutex
 	readOBs map[uuid.UUID]*agent
-	crypto  *utils.Crypto
+	crypto  *crypto.Crypto
 	rls     sync.Once
 }
 
@@ -98,33 +99,33 @@ func initClient(conf RemoteProxyConf) (*relay, error) {
 // handshake do handshake with remote proxy server
 // deal with ConstBlockTypeHandShake, ConstBlockTypeHandShakeResponse, ConstBlockTypeHandShakeFinal
 func (c *relay) handshake() error {
-	if _, err := c.conn.Write(protocol.Marshal(&protocol.BlockData{
-		Type: protocol.ConstBlockTypeHandShake,
+	if _, err := c.conn.Write(block.Marshal(&block.BlockData{
+		Type: block.ConstBlockTypeHandShake,
 	})); err != nil {
 		log.Errorf("[relay %v] handshake with remote server faild, err: %v", c.ID, err)
 		c.Lasterr = err
 		return c.Lasterr
 	}
 
-	buf := make([]byte, protocol.ConstBlockHeaderSzB)
+	buf := make([]byte, block.ConstBlockHeaderSzB)
 
-	if n, err := io.ReadFull(c.conn, buf); err != nil || n < protocol.ConstBlockHeaderSzB {
+	if n, err := io.ReadFull(c.conn, buf); err != nil || n < block.ConstBlockHeaderSzB {
 		log.Errorf("[relay %v] read handshake failed, err: %v", c.ID, err)
 		c.Lasterr = err
 		return c.Lasterr
 	}
 
-	if blockdata, err := protocol.UnMarshalHeader(buf); err != nil || blockdata.Type != protocol.ConstBlockTypeHandShake {
+	if blockdata, err := block.UnMarshalHeader(buf); err != nil || blockdata.Type != block.ConstBlockTypeHandShake {
 		log.Errorf("[relay %v] error handshake msg", c.ID)
 		c.Lasterr = errors.New("err handshake msg")
 		return c.Lasterr
 	}
 
-	passwd := []byte(protocol.NewGUID().String())
+	passwd := []byte(block.NewGUID().String())
 
-	if _, err := c.conn.Write(protocol.Marshal(&protocol.BlockData{
-		ID:   protocol.NewGUID(),
-		Type: protocol.ConstBlockTypeHandShakeResponse,
+	if _, err := c.conn.Write(block.Marshal(&block.BlockData{
+		ID:   block.NewGUID(),
+		Type: block.ConstBlockTypeHandShakeResponse,
 		Data: passwd,
 	})); err != nil {
 		log.Errorf("[relay %v] send handshake resp failed, err: %v", c.ID, err)
@@ -132,19 +133,19 @@ func (c *relay) handshake() error {
 		return c.Lasterr
 	}
 
-	if n, err := io.ReadFull(c.conn, buf); err != nil || n < protocol.ConstBlockHeaderSzB {
+	if n, err := io.ReadFull(c.conn, buf); err != nil || n < block.ConstBlockHeaderSzB {
 		log.Errorf("[relay %v] read handshake resp failed, err: %v", c.ID, err)
 		c.Lasterr = err
 		return c.Lasterr
 	}
 
-	if blockdata, err := protocol.UnMarshalHeader(buf); err != nil || blockdata.Type != protocol.ConstBlockTypeHandShakeFinal {
+	if blockdata, err := block.UnMarshalHeader(buf); err != nil || blockdata.Type != block.ConstBlockTypeHandShakeFinal {
 		log.Errorf("[relay %v] err handshake final msg", c.ID)
 		c.Lasterr = errors.New("err handshake final msg")
 		return c.Lasterr
 	}
 
-	c.crypto = utils.NewCrypto(passwd)
+	c.crypto = crypto.NewCrypto(passwd)
 
 	return nil
 }
@@ -153,14 +154,14 @@ func (c *relay) beginRead() {
 	defer c.release()
 
 	for {
-		header := make([]byte, protocol.ConstBlockHeaderSzB)
-		if n, err := io.ReadFull(c.conn, header); err != nil || n < protocol.ConstBlockHeaderSzB {
+		header := make([]byte, block.ConstBlockHeaderSzB)
+		if n, err := io.ReadFull(c.conn, header); err != nil || n < block.ConstBlockHeaderSzB {
 			log.Warnf("[relay %v] read header failed, err: %v", c.ID, err)
 			c.Lasterr = err
 			return
 		}
 
-		blockData, err := protocol.UnMarshalHeader(header)
+		blockData, err := block.UnMarshalHeader(header)
 		if err != nil {
 			log.Errorf("[relay %v] unmarshal datablock failed, err: %v", c.ID, err)
 			c.Lasterr = err
@@ -182,7 +183,7 @@ func (c *relay) beginRead() {
 			blockData.Length = int32(len(blockData.Data))
 		}
 
-		if blockData.Type == protocol.ConstBlockTypeDisconnect {
+		if blockData.Type == block.ConstBlockTypeDisconnect {
 			var ids []string
 			if err := json.Unmarshal(blockData.Data, &ids); err != nil {
 				log.Errorf("[relay %v] recv bad disconnect data %v", c.ID, string(blockData.Data))
@@ -210,7 +211,7 @@ func (c *relay) beginRead() {
 	}
 }
 
-func (c *relay) Write(blockdata *protocol.BlockData) (int, error) {
+func (c *relay) Write(blockdata *block.BlockData) (int, error) {
 	if c.Status != constStatusRunning {
 		return 0, fmt.Errorf("[relay %v] client is not running", c.ID)
 	}
@@ -223,7 +224,7 @@ func (c *relay) Write(blockdata *protocol.BlockData) (int, error) {
 	if len(blockdata.Data) > 0 {
 		blockdata.Data = c.crypto.CryptBlocks(blockdata.Data)
 	}
-	b := protocol.Marshal(blockdata)
+	b := block.Marshal(blockdata)
 	log.Debugf("[relay %v] send %s", c.ID, blockdata)
 	return c.conn.Write(b)
 }

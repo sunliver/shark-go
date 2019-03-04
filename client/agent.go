@@ -9,7 +9,7 @@ import (
 
 	uuid "github.com/satori/go.uuid"
 	log "github.com/sirupsen/logrus"
-	"github.com/sunliver/shark/protocol"
+	"github.com/sunliver/shark/lib/block"
 )
 
 // agent handle connection from local
@@ -19,7 +19,7 @@ type agent struct {
 	c         *relay
 	conn      net.Conn
 	proxy     proxy
-	writechan chan *protocol.BlockData
+	writechan chan *block.BlockData
 	rls       sync.Once
 	ticket    *uint64
 	done      *uint64
@@ -34,7 +34,7 @@ const (
 
 type proxy interface {
 	// HandShake returns proxy handshake msg
-	handShake(conn net.Conn) (blockdata *protocol.BlockData, read []byte, err error)
+	handShake(conn net.Conn) (blockdata *block.BlockData, read []byte, err error)
 	// HandShakeResp returns proxy handshake resp msg
 	handShakeResp() []byte
 	T() int
@@ -49,17 +49,17 @@ type hostData struct {
 func ServerProxy(p string, conn net.Conn, c *relay) {
 	p = "http"
 	pc := &agent{
-		ID:        protocol.NewGUID(),
+		ID:        block.NewGUID(),
 		proxy:     &httpProxy{},
 		c:         c,
 		conn:      conn,
-		writechan: make(chan *protocol.BlockData),
+		writechan: make(chan *block.BlockData),
 		ticket:    new(uint64),
 		done:      new(uint64),
 	}
 
 	for pc.c.RegisterObserver(pc) != nil {
-		pc.ID = protocol.NewGUID()
+		pc.ID = block.NewGUID()
 	}
 	pc.start()
 }
@@ -85,7 +85,7 @@ func (pc *agent) start() {
 	// wait connected resp
 	data := <-pc.writechan
 
-	if data.Type == protocol.ConstBlockTypeConnected {
+	if data.Type == block.ConstBlockTypeConnected {
 		if pc.proxy.T() == constProxyTypeHTTPS {
 			if err := pc.writeToLocal(pc.proxy.handShakeResp()); err != nil {
 				pc.release()
@@ -93,7 +93,7 @@ func (pc *agent) start() {
 			}
 			log.Infof("[agent] write handshake resp")
 		}
-	} else if data.Type == protocol.ConstBlockTypeConnectFailed {
+	} else if data.Type == block.ConstBlockTypeConnectFailed {
 		log.Infof("[agent] recv connect failed, %s", data)
 		pc.release()
 		return
@@ -104,9 +104,9 @@ func (pc *agent) start() {
 	}
 
 	// send http remain
-	if _, err := pc.c.Write(&protocol.BlockData{
+	if _, err := pc.c.Write(&block.BlockData{
 		ID:   pc.ID,
-		Type: protocol.ConstBlockTypeData,
+		Type: block.ConstBlockTypeData,
 		Data: remain,
 	}); err != nil {
 		log.Errorf("[agent] send http msg failed, err: %v", err)
@@ -139,9 +139,9 @@ func (pc *agent) beginRead() {
 			break
 		}
 
-		if _, err := pc.c.Write(&protocol.BlockData{
+		if _, err := pc.c.Write(&block.BlockData{
 			ID:   pc.ID,
-			Type: protocol.ConstBlockTypeData,
+			Type: block.ConstBlockTypeData,
 			Data: buf[:n],
 		}); err != nil {
 			log.Warnf("[agent] write data to remote failed, err: %v", err)
@@ -150,7 +150,7 @@ func (pc *agent) beginRead() {
 	}
 }
 
-func (pc *agent) onRead(ticket uint64, data *protocol.BlockData, err error) {
+func (pc *agent) onRead(ticket uint64, data *block.BlockData, err error) {
 	for !atomic.CompareAndSwapUint64(pc.done, ticket, ticket) {
 		runtime.Gosched()
 	}
@@ -180,7 +180,7 @@ func (pc *agent) write() {
 	for {
 		select {
 		case data := <-pc.writechan:
-			if data.Type == protocol.ConstBlockTypeData {
+			if data.Type == block.ConstBlockTypeData {
 				if err := pc.writeToLocal(data.Data); err != nil {
 					return
 				}

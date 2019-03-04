@@ -1,4 +1,4 @@
-package protocol
+package block
 
 import (
 	"testing"
@@ -9,13 +9,13 @@ import (
 func TestMarshal(t *testing.T) {
 
 	cases := []BlockData{
-		BlockData{
+		{
 			ID:       NewGUID(),
 			Type:     ConstBlockTypeData,
 			BlockNum: 0x12345678,
 			Data:     []byte{0x12, 0x34, 0x56, 0x78},
 		},
-		BlockData{
+		{
 			ID:       NewGUID(),
 			Type:     ConstBlockTypeHandShake,
 			BlockNum: 0x12345678,

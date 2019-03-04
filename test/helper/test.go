@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	uuid "github.com/satori/go.uuid"
-	"github.com/sunliver/shark/protocol"
-	"github.com/sunliver/shark/utils"
+	"github.com/sunliver/shark/lib/block"
+	"github.com/sunliver/shark/lib/crypto"
 )
 
 func NewEchoServer(t *testing.T, port int, uuid uuid.UUID) {
@@ -30,23 +30,23 @@ func NewEchoServer(t *testing.T, port int, uuid uuid.UUID) {
 
 		// handshake 1
 		{
-			header := make([]byte, protocol.ConstBlockHeaderSzB)
-			if n, err := io.ReadFull(conn, header); err != nil || n != protocol.ConstBlockHeaderSzB {
+			header := make([]byte, block.ConstBlockHeaderSzB)
+			if n, err := io.ReadFull(conn, header); err != nil || n != block.ConstBlockHeaderSzB {
 				t.Fatal(err)
 			}
 
-			blockdata, err := protocol.UnMarshal(header)
+			blockdata, err := block.UnMarshal(header)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			if blockdata.Type != protocol.ConstBlockTypeHandShake {
+			if blockdata.Type != block.ConstBlockTypeHandShake {
 				t.Fatal("invalid handshake")
 			}
 
-			if _, err := conn.Write(protocol.Marshal(&protocol.BlockData{
+			if _, err := conn.Write(block.Marshal(&block.BlockData{
 				ID:   uuid,
-				Type: protocol.ConstBlockTypeHandShake,
+				Type: block.ConstBlockTypeHandShake,
 			})); err != nil {
 				t.Fatal(err)
 			}
@@ -55,18 +55,18 @@ func NewEchoServer(t *testing.T, port int, uuid uuid.UUID) {
 		// handshake 2
 		var passwd []byte
 		{
-			header := make([]byte, protocol.ConstBlockHeaderSzB)
+			header := make([]byte, block.ConstBlockHeaderSzB)
 
-			if n, err := io.ReadFull(conn, header); err != nil || n != protocol.ConstBlockHeaderSzB {
+			if n, err := io.ReadFull(conn, header); err != nil || n != block.ConstBlockHeaderSzB {
 				t.Fatal(err)
 			}
 
-			blockHeader, err := protocol.UnMarshalHeader(header)
+			blockHeader, err := block.UnMarshalHeader(header)
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			if blockHeader.Type != protocol.ConstBlockTypeHandShakeResponse {
+			if blockHeader.Type != block.ConstBlockTypeHandShakeResponse {
 				t.Fatal("invalid handshake resp")
 			}
 
@@ -77,42 +77,42 @@ func NewEchoServer(t *testing.T, port int, uuid uuid.UUID) {
 
 			passwd = body
 
-			if _, err := conn.Write(protocol.Marshal(&protocol.BlockData{
+			if _, err := conn.Write(block.Marshal(&block.BlockData{
 				ID:   uuid,
-				Type: protocol.ConstBlockTypeHandShakeFinal,
+				Type: block.ConstBlockTypeHandShakeFinal,
 			})); err != nil {
 				t.Fatal(err)
 			}
 		}
 
-		crypto := utils.NewCrypto(passwd)
+		crypto := crypto.NewCrypto(passwd)
 
 		for {
-			header := make([]byte, protocol.ConstBlockHeaderSzB)
-			if n, err := io.ReadFull(conn, header); err != nil || n != protocol.ConstBlockHeaderSzB {
+			header := make([]byte, block.ConstBlockHeaderSzB)
+			if n, err := io.ReadFull(conn, header); err != nil || n != block.ConstBlockHeaderSzB {
 				t.Fatal(err)
 			}
 
-			blockHeader, err := protocol.UnMarshal(header)
+			blockHeader, err := block.UnMarshal(header)
 			if err != nil {
 				t.Fatal(err)
 			}
 
 			switch blockHeader.Type {
-			case protocol.ConstBlockTypeConnect:
+			case block.ConstBlockTypeConnect:
 				body := make([]byte, blockHeader.Length)
 				if n, err := io.ReadFull(conn, body); err != nil || n != int(blockHeader.Length) {
 					t.Fatal(err)
 				}
 				t.Logf("remote server recv connect msg, %v", string(crypto.DecrypBlocks(body)))
 
-				if _, err := conn.Write(protocol.Marshal(&protocol.BlockData{
+				if _, err := conn.Write(block.Marshal(&block.BlockData{
 					ID:   blockHeader.ID,
-					Type: protocol.ConstBlockTypeConnected,
+					Type: block.ConstBlockTypeConnected,
 				})); err != nil {
 					t.Fatal(err)
 				}
-			case protocol.ConstBlockTypeData:
+			case block.ConstBlockTypeData:
 				body := make([]byte, blockHeader.Length)
 				if n, err := io.ReadFull(conn, body); err != nil || int32(n) != blockHeader.Length {
 					t.Fatal(err)
@@ -120,15 +120,15 @@ func NewEchoServer(t *testing.T, port int, uuid uuid.UUID) {
 
 				// t.Logf("recv data, %v", string(crypto.DecrypBlocks(body)))
 
-				if _, err := conn.Write(protocol.Marshal(&protocol.BlockData{
+				if _, err := conn.Write(block.Marshal(&block.BlockData{
 					ID:   blockHeader.ID,
-					Type: protocol.ConstBlockTypeData,
+					Type: block.ConstBlockTypeData,
 					Data: body,
 				})); err != nil {
 					t.Fatal(err)
 				}
 
-			case protocol.ConstBlockTypeDisconnect:
+			case block.ConstBlockTypeDisconnect:
 				t.Log("receive disconnect")
 				return
 			}

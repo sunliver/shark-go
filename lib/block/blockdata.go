@@ -1,4 +1,4 @@
-package protocol
+package block
 
 import (
 	"bytes"
@@ -33,7 +33,7 @@ func NewGUID() uuid.UUID {
 }
 
 var ErrBrokenBytes = fmt.Errorf("data: at least need %d bytes", ConstBlockHeaderSzB)
-var ErrInvalidBlock = errors.New("data: invalid block")
+var ErrInvalidBlock = errors.New("data: invalid chunk")
 
 // Marshal blockdata into bytes
 func Marshal(b *BlockData) []byte {

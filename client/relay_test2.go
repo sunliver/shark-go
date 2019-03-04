@@ -5,12 +5,12 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/sunliver/shark/client/helper"
-	"github.com/sunliver/shark/protocol"
+	"github.com/sunliver/shark/lib/block"
+	"github.com/sunliver/shark/test/helper"
 )
 
 func TestClientOK(t *testing.T) {
-	uuid := protocol.NewGUID()
+	uuid := block.NewGUID()
 
 	go helper.NewEchoServer(t, 9001, uuid)
 
@@ -26,15 +26,15 @@ func TestClientOK(t *testing.T) {
 		t.FailNow()
 	}
 
-	client.Write(&protocol.BlockData{
+	client.Write(&block.BlockData{
 		ID:   uuid,
-		Type: protocol.ConstBlockTypeData,
+		Type: block.ConstBlockTypeData,
 		Data: []byte("Hello"),
 	})
 
-	client.Write(&protocol.BlockData{
+	client.Write(&block.BlockData{
 		ID:   uuid,
-		Type: protocol.ConstBlockTypeDisconnect,
+		Type: block.ConstBlockTypeDisconnect,
 	})
 
 	time.Sleep(time.Millisecond * 100)

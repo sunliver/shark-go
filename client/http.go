@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	log "github.com/sirupsen/logrus"
-	"github.com/sunliver/shark/protocol"
+	"github.com/sunliver/shark/lib/block"
 )
 
 const (
@@ -28,7 +28,7 @@ type httpProxy struct {
 	pType int
 }
 
-func (p *httpProxy) handShake(conn net.Conn) (blockdata *protocol.BlockData, remain []byte, err error) {
+func (p *httpProxy) handShake(conn net.Conn) (blockdata *block.BlockData, remain []byte, err error) {
 	var msg []byte
 	var read []byte
 Found:
@@ -88,8 +88,8 @@ Found:
 		Port:    uint16(port),
 	})
 
-	return &protocol.BlockData{
-		Type: protocol.ConstBlockTypeConnect,
+	return &block.BlockData{
+		Type: block.ConstBlockTypeConnect,
 		Data: []byte(hostdata),
 	}, remain, err
 }

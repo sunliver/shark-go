@@ -5,11 +5,12 @@ import (
 	"net"
 	"testing"
 
+	"github.com/sunliver/shark/lib/block"
+
 	log "github.com/sirupsen/logrus"
+	"github.com/sunliver/shark/test/helper"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/sunliver/shark/client/helper"
-	"github.com/sunliver/shark/protocol"
 )
 
 func TestAgentOK(t *testing.T) {
@@ -23,7 +24,7 @@ func TestAgentOK(t *testing.T) {
 
 	for k, v := range cases {
 		port := 9002
-		uuid := protocol.NewGUID()
+		uuid := block.NewGUID()
 		go helper.NewEchoServer(t, port, uuid)
 
 		conf := RemoteProxyConf{
@@ -46,17 +47,17 @@ func TestAgentOK(t *testing.T) {
 		}()
 
 		pc := &agent{
-			ID:        protocol.NewGUID(),
+			ID:        block.NewGUID(),
 			proxy:     &httpProxy{},
 			c:         localclient,
 			conn:      client,
-			writechan: make(chan *protocol.BlockData),
+			writechan: make(chan *block.BlockData),
 			ticket:    new(uint64),
 			done:      new(uint64),
 		}
 
 		for pc.c.RegisterObserver(pc) != nil {
-			pc.ID = protocol.NewGUID()
+			pc.ID = block.NewGUID()
 		}
 
 		pc.start()

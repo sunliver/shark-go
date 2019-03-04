@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/sunliver/shark/protocol"
+	"github.com/sunliver/shark/lib/block"
 )
 
 func initConn(msg string) net.Conn {
@@ -36,7 +36,7 @@ func TestHTTPHandShakeOK(t *testing.T) {
 	})
 
 	assert.Equal(t, errHTTPDegrade, err)
-	assert.Equal(t, protocol.ConstBlockTypeConnect, blockdata.Type)
+	assert.Equal(t, block.ConstBlockTypeConnect, blockdata.Type)
 	assert.Equal(t, []byte(hostdata), blockdata.Data)
 	assert.Equal(t, httpstr, string(remain))
 }
@@ -54,7 +54,7 @@ func TestHTTPSHandShakeOK(t *testing.T) {
 	})
 
 	assert.Nil(t, err)
-	assert.Equal(t, protocol.ConstBlockTypeConnect, blockdata.Type)
+	assert.Equal(t, block.ConstBlockTypeConnect, blockdata.Type)
 	assert.Equal(t, []byte(hostdata), blockdata.Data)
 	assert.Equal(t, "Hello\r\n", string(remain))
 }
