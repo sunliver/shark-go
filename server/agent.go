@@ -40,7 +40,7 @@ func NewServer(ctx context.Context, conn net.Conn) *Agent {
 		conn:   conn,
 		relays: make(map[uuid.UUID]*relay, serverRelayBuf),
 		out:    make(chan []byte, serverOutBuf),
-		log:    logrus.WithField("agent", short(id)),
+		log:    logrus.WithField("agent", short(id)).WithField("conn", conn.RemoteAddr()),
 	}
 }
 
@@ -67,42 +67,31 @@ func (a *Agent) Run() {
 		default:
 			buf := make([]byte, block.ConstBlockHeaderSzB)
 			if n, err := io.ReadFull(a.conn, buf); err != nil || n < len(buf) {
-				a.log.Errorf("broken conn, %v", err)
+				a.log.Errorf("read broken header, %v", err)
 				return
 			}
 
 			blockData, err := block.UnMarshalHeader(buf)
 			if err != nil {
-				a.log.Errorf("broken header, %v", err)
+				a.log.Errorf("unmarshal header failed, %v", err)
 				return
 			}
 
-			if blockData.Type == block.ConstBlockTypeConnect {
+			if blockData.Length > 0 {
 				body := make([]byte, blockData.Length)
 				if n, err := io.ReadFull(a.conn, body); err != nil || n < len(body) {
 					a.log.Errorf("broken package, %v", err)
 					return
 				}
-
 				blockData.Data = body
+			}
+
+			if relay, ok := a.relays[blockData.ID]; ok {
+				relay.in <- blockData
+			} else {
 				a.registerRelay(newRelay(a, blockData.ID))
 				go a.relays[blockData.ID].run()
 				a.relays[blockData.ID].in <- blockData
-			} else if blockData.Type == block.ConstBlockTypeData {
-				body := make([]byte, blockData.Length)
-				if n, err := io.ReadFull(a.conn, body); err != nil || n < len(body) {
-					a.log.Errorf("broken package, %v", err)
-					return
-				}
-				blockData.Data = body
-
-				if relay, ok := a.relays[blockData.ID]; ok {
-					relay.in <- blockData
-				} else {
-					a.log.Warn("send data to closed relay")
-				}
-			} else {
-				a.log.Warnf("unrecognized block, %v", blockData)
 			}
 		}
 	}

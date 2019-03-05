@@ -1,7 +1,6 @@
 package client
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -181,28 +180,6 @@ func (c *relay) beginRead() {
 
 			blockData.Data = c.crypto.DecrypBlocks(body)
 			blockData.Length = int32(len(blockData.Data))
-		}
-
-		if blockData.Type == block.ConstBlockTypeDisconnect {
-			var ids []string
-			if err := json.Unmarshal(blockData.Data, &ids); err != nil {
-				log.Errorf("[relay %v] recv bad disconnect data %v", c.ID, string(blockData.Data))
-				c.Lasterr = err
-				return
-			}
-
-			for _, id := range ids {
-				uid, err := uuid.FromString(id)
-				if err != nil {
-					log.Errorf("[relay %v] unmarshal uuid failed, err: %v, uuid: %v", c.ID, err, id)
-					c.Lasterr = err
-					return
-				}
-
-				if ob, ok := c.readOBs[uid]; ok {
-					go ob.onRead(atomic.AddUint64(ob.ticket, 1)-1, nil, errClose)
-				}
-			}
 		}
 
 		if ob, ok := c.readOBs[blockData.ID]; ok {

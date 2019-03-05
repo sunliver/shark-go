@@ -86,6 +86,7 @@ func (r *relay) run() {
 					return
 				}
 				r.conn = conn
+				r.log = r.log.WithField("conn", r.conn.RemoteAddr())
 				r.a.out <- block.Marshal(&block.BlockData{
 					ID:   r.id,
 					Type: block.ConstBlockTypeConnected,
@@ -130,11 +131,6 @@ func (r *relay) write() {
 
 	var blockNum uint32
 	for {
-		if err := r.conn.SetReadDeadline(time.Now().Add(constRemoteReadTimeout)); err != nil {
-			r.log.Warnf("set remote read timeout failed %v", err)
-			return
-		}
-
 		select {
 		case <-r.ctx.Done():
 			r.log.Infof("write is canceled, %v", r.ctx.Err())
@@ -144,6 +140,12 @@ func (r *relay) write() {
 			n, err := io.ReadAtLeast(r.conn, buf, 1)
 			if err != nil {
 				r.log.Warnf("read from remote failed, %v", err)
+
+				r.a.out <- block.Marshal(&block.BlockData{
+					ID:       r.id,
+					BlockNum: blockNum,
+					Type:     block.ConstBlockTypeDisconnect,
+				})
 				return
 			}
 

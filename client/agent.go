@@ -181,6 +181,9 @@ func (pc *agent) write() {
 				if err := pc.writeToLocal(data.Data); err != nil {
 					return
 				}
+			} else if data.Type == block.ConstBlockTypeDisconnect {
+				log.Infof("remote closed")
+				return
 			}
 		}
 	}
