@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -27,37 +28,42 @@ const (
 type relay struct {
 	ID     uuid.UUID
 	conn   net.Conn
+	ctx    context.Context
 	bus    chan []byte
 	crypto *crypto.Crypto
 	log    logrus.FieldLogger
 	mutex  sync.Mutex
 	agents map[uuid.UUID]*agent
+	cancel func()
 }
 
-func newRelay(remote string) (*relay, error) {
+func newRelay(ctx context.Context, remote string) (*relay, error) {
+	c, cancel := context.WithCancel(ctx)
 	conn, err := net.Dial("tcp", remote)
 	if err != nil {
 		return nil, fmt.Errorf("init to remote server failed, err: %v", err)
 	}
 
 	id := uuid.NewV4()
-	c := &relay{
+	r := &relay{
 		ID:     id,
 		conn:   conn,
+		ctx:    c,
+		cancel: cancel,
 		agents: make(map[uuid.UUID]*agent),
 		bus:    make(chan []byte, relayBusSz),
 		log:    logrus.WithField("relay", short(id)).WithField("conn", conn.RemoteAddr()),
 	}
 
-	if err := c.handshake(); err != nil {
-		c.log.Errorf("handshake failed, %v", err)
-		return c, err
+	if err := r.handshake(); err != nil {
+		r.log.Errorf("handshake failed, %v", err)
+		return r, err
 	}
 
-	go c.read()
-	go c.write()
+	go r.read()
+	go r.write()
 
-	return c, nil
+	return r, nil
 }
 
 // handshake do handshake with remote proxy server
@@ -117,33 +123,39 @@ func (c *relay) read() {
 	defer c.release()
 
 	for {
-		buf := make([]byte, block.ConstBlockHeaderSzB)
-		if n, err := io.ReadFull(c.conn, buf); err != nil || n < len(buf) {
-			c.log.Warnf("read header failed, %v", err)
+		select {
+		case <-c.ctx.Done():
+			c.log.Infof("read recv done, %v", c.ctx.Err())
 			return
-		}
-
-		blockData, err := block.UnMarshalHeader(buf)
-		if err != nil {
-			c.log.Errorf("broken header, %v", err)
-			return
-		}
-
-		if blockData.Length > 0 {
-			body := make([]byte, blockData.Length)
-			if n, err := io.ReadFull(c.conn, body); err != nil || n < int(blockData.Length) {
-				c.log.Warnf("read body failed, %v", err)
+		default:
+			buf := make([]byte, block.ConstBlockHeaderSzB)
+			if n, err := io.ReadFull(c.conn, buf); err != nil || n < len(buf) {
+				c.log.Warnf("read header failed, %v", err)
 				return
 			}
 
-			blockData.Data = c.crypto.DecrypBlocks(body)
-		}
+			blockData, err := block.UnMarshalHeader(buf)
+			if err != nil {
+				c.log.Errorf("broken header, %v", err)
+				return
+			}
 
-		c.log.Debugf("recv block: %v", blockData)
+			if blockData.Length > 0 {
+				body := make([]byte, blockData.Length)
+				if n, err := io.ReadFull(c.conn, body); err != nil || n < int(blockData.Length) {
+					c.log.Warnf("read body failed, %v", err)
+					return
+				}
 
-		if ob, ok := c.agents[blockData.ID]; ok {
-			// TODO add time out
-			ob.bus <- blockData
+				blockData.Data = body
+			}
+
+			c.log.Debugf("recv block: %v", blockData)
+
+			if ob, ok := c.agents[blockData.ID]; ok {
+				// TODO add time out
+				ob.bus <- blockData
+			}
 		}
 	}
 }
@@ -153,10 +165,20 @@ func (c *relay) write() {
 	defer c.log.Infof("write routine stop")
 	defer c.release()
 
-	for b := range c.bus {
-		if n, err := c.conn.Write(b); err != nil || n < len(b) {
-			c.log.Warnf("write to remote failed, %v", err)
+	for {
+		select {
+		case <-c.ctx.Done():
+			c.log.Infof("write recv done, %v", c.ctx.Err())
 			return
+		case b, ok := <-c.bus:
+			if !ok {
+				c.log.Infof("write listen closed channel")
+				return
+			}
+			if n, err := c.conn.Write(b); err != nil || n < len(b) {
+				c.log.Warnf("write to remote failed, %v", err)
+				return
+			}
 		}
 	}
 }
@@ -166,22 +188,13 @@ func (c *relay) registerAgent(a *agent) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	if c.agents == nil {
-		return
-	}
-
 	c.agents[a.ID] = a
-	return
 }
 
 // unregisterAgent stop receive msg from client
 func (c *relay) unregisterAgent(a *agent) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-
-	if c.agents == nil {
-		return
-	}
 
 	delete(c.agents, a.ID)
 }
@@ -190,14 +203,8 @@ func (c *relay) unregisterAgent(a *agent) {
 func (c *relay) release() {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-	if c.agents == nil {
-		return
-	}
 
-	for _, ob := range c.agents {
-		ob.bus <- nil
-	}
-	c.agents = nil
+	c.cancel()
 	c.conn.Close()
 
 	c.log.Infof("relay is closed")

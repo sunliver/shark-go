@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -16,23 +17,28 @@ const (
 
 // agent handle connection from local
 type agent struct {
-	ID    uuid.UUID
-	conn  net.Conn
-	r     *relay
-	proxy proxy
-	log   logrus.FieldLogger
-	bus   chan *block.BlockData
+	ID     uuid.UUID
+	conn   net.Conn
+	r      *relay
+	ctx    context.Context
+	cancel func()
+	proxy  proxy
+	log    logrus.FieldLogger
+	bus    chan *block.BlockData
 }
 
 func newAgent(conn net.Conn, p string, r *relay) *agent {
+	c, cancel := context.WithCancel(r.ctx)
 	id := block.NewGUID()
 	a := &agent{
-		ID:    id,
-		proxy: &httpProxy{},
-		conn:  conn,
-		r:     r,
-		bus:   make(chan *block.BlockData, agentBusSz),
-		log:   logrus.WithField("agent", short(id)).WithField("conn", conn.RemoteAddr()),
+		ID:     id,
+		proxy:  &httpProxy{},
+		conn:   conn,
+		ctx:    c,
+		cancel: cancel,
+		r:      r,
+		bus:    make(chan *block.BlockData, agentBusSz),
+		log:    logrus.WithField("agent", short(id)).WithField("conn", conn.RemoteAddr()),
 	}
 	a.r.registerAgent(a)
 	return a
@@ -55,7 +61,6 @@ func (a *agent) run() {
 	a.r.bus <- block.Marshal(blockData)
 
 	// wait connected resp
-
 	data := <-a.bus
 
 	if data.Type == block.ConstBlockTypeConnected {
@@ -93,18 +98,24 @@ func (a *agent) read() {
 	defer a.release()
 
 	for {
-		buf := make([]byte, 4096)
-		n, err := io.ReadAtLeast(a.conn, buf, 1)
-		if err != nil {
-			a.log.Warnf("[agent] read from local failed, err: %v", err)
-			break
-		}
+		select {
+		case <-a.ctx.Done():
+			a.log.Infof("read recv done, %v", a.ctx.Err())
+			return
+		default:
+			buf := make([]byte, 4096)
+			n, err := io.ReadAtLeast(a.conn, buf, 1)
+			if err != nil {
+				a.log.Warnf("[agent] read from local failed, err: %v", err)
+				break
+			}
 
-		a.r.bus <- block.Marshal(&block.BlockData{
-			ID:   a.ID,
-			Type: block.ConstBlockTypeData,
-			Data: a.r.crypto.CryptBlocks(buf[:n]),
-		})
+			a.r.bus <- block.Marshal(&block.BlockData{
+				ID:   a.ID,
+				Type: block.ConstBlockTypeData,
+				Data: a.r.crypto.CryptBlocks(buf[:n]),
+			})
+		}
 	}
 }
 
@@ -115,14 +126,17 @@ func (a *agent) write() {
 
 	for {
 		select {
+		case <-a.ctx.Done():
+			a.log.Infof("write recv done, %v", a.ctx.Err())
+			return
 		case data, ok := <-a.bus:
-			if !ok || data == nil {
-				a.log.Warnf("recv close signal")
+			if !ok {
+				a.log.Infof("write listen closed channel")
 				return
 			}
 
 			if data.Type == block.ConstBlockTypeData {
-				if n, err := a.conn.Write(data.Data); err != nil || n < len(data.Data) {
+				if n, err := a.conn.Write(a.r.crypto.DecrypBlocks(data.Data)); err != nil || n < len(data.Data) {
 					a.log.Warnf("write back failed, %v", err)
 					return
 				}
@@ -137,6 +151,7 @@ func (a *agent) write() {
 }
 
 func (a *agent) release() {
+	a.cancel()
 	a.r.unregisterAgent(a)
 	a.conn.Close()
 

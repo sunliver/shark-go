@@ -2,6 +2,7 @@ package client
 
 import (
 	"container/list"
+	"context"
 	"net"
 	"sync"
 	"time"
@@ -69,7 +70,7 @@ func (m *Manager) getClient() (*relay, error) {
 	if m.clients.Len() == 0 || m.coreSz == -1 {
 		var e error
 		for i := 0; i < m.retryCnt; i++ {
-			cc, err := newRelay(m.remote)
+			cc, err := newRelay(context.Background(), m.remote)
 			if err != nil {
 				e = err
 				continue
@@ -101,7 +102,7 @@ func (m *Manager) initPool() {
 	for m.clients.Len() < m.coreSz {
 		i := 0
 		for ; i < m.retryCnt; i++ {
-			c, err := newRelay(m.remote)
+			c, err := newRelay(context.Background(), m.remote)
 			if err != nil {
 				log.Errorf("[Manager] init client failed, %v, retrying %v", err, i)
 				time.Sleep(m.retryDelay * time.Duration(2<<uint32(i)))
