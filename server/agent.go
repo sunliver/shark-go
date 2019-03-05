@@ -18,7 +18,7 @@ type Agent struct {
 	conn   net.Conn
 	crypto *crypto.Crypto
 	log    logrus.FieldLogger
-	out    chan []byte
+	bus    chan []byte
 	relays map[uuid.UUID]*relay
 	mutex  sync.Mutex
 	ctx    context.Context
@@ -26,8 +26,8 @@ type Agent struct {
 }
 
 const (
-	serverOutBuf   = 64
-	serverRelayBuf = 64
+	agentBusSz       = 64
+	agentRelayInitSz = 64
 )
 
 func NewServer(ctx context.Context, conn net.Conn) *Agent {
@@ -38,17 +38,13 @@ func NewServer(ctx context.Context, conn net.Conn) *Agent {
 		ctx:    c,
 		cancel: cancel,
 		conn:   conn,
-		relays: make(map[uuid.UUID]*relay, serverRelayBuf),
-		out:    make(chan []byte, serverOutBuf),
+		relays: make(map[uuid.UUID]*relay, agentRelayInitSz),
+		bus:    make(chan []byte, agentBusSz),
 		log:    logrus.WithField("agent", short(id)).WithField("conn", conn.RemoteAddr()),
 	}
 }
 
 func (a *Agent) Run() {
-	defer a.release()
-
-	a.log.Infof("run routine is start!")
-
 	if err := a.handShake(); err != nil {
 		a.log.Errorf("handshake failed, %v", err)
 		return
@@ -56,7 +52,14 @@ func (a *Agent) Run() {
 
 	a.log.Infof("handshake success, %v", a.conn.RemoteAddr())
 
-	go a.writeBack()
+	go a.read()
+	go a.write()
+}
+
+func (a *Agent) read() {
+	a.log.Infof("read routine start")
+	defer a.log.Infof("read routine stop")
+	defer a.release()
 
 	for {
 		select {
@@ -87,24 +90,24 @@ func (a *Agent) Run() {
 			}
 
 			if relay, ok := a.relays[blockData.ID]; ok {
-				relay.in <- blockData
+				relay.bus <- blockData
 			} else {
 				a.registerRelay(newRelay(a, blockData.ID))
 				go a.relays[blockData.ID].run()
-				a.relays[blockData.ID].in <- blockData
+				a.relays[blockData.ID].bus <- blockData
 			}
 		}
 	}
 }
 
-func (a *Agent) writeBack() {
+func (a *Agent) write() {
+	a.log.Debugf("write routine start")
+	defer a.log.Debugf("write routine stop")
 	defer a.release()
 
-	a.log.Infof("writeback routine is start!")
-
-	for b := range a.out {
+	for b := range a.bus {
 		if n, err := a.conn.Write(b); err != nil || n < len(b) {
-			a.log.Warn("write back failed, %v", err)
+			a.log.Warnf("write back failed, %v", err)
 			return
 		}
 	}
@@ -195,8 +198,9 @@ func (a *Agent) unregisterRelay(r *relay) {
 func (a *Agent) release() {
 	a.cancel()
 	a.conn.Close()
+	a.relays = nil
 
-	a.log.Info("agent is closed")
+	a.log.Infof("agent is closed")
 }
 
 func short(id uuid.UUID) string {

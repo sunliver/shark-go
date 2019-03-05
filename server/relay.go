@@ -16,18 +16,18 @@ import (
 type relay struct {
 	id     uuid.UUID
 	conn   net.Conn
-	in     chan *block.BlockData
+	a      *Agent
+	bus    chan *block.BlockData
 	log    logrus.FieldLogger
 	ctx    context.Context
 	cancel func()
-	a      *Agent
 }
 
 const (
-	constRelayBuf           = 16
-	constRemoteReadBuf      = 4096
+	relayBusSz              = 16
+	remoteReadBufSz         = 4096
 	constRemoteReadTimeout  = time.Second * 60
-	constRemoteWriteTimeout = time.Second * 30
+	constRemoteWriteTimeout = time.Second * 60
 )
 
 func newRelay(a *Agent, id uuid.UUID) *relay {
@@ -36,24 +36,16 @@ func newRelay(a *Agent, id uuid.UUID) *relay {
 		id:     id,
 		ctx:    c,
 		cancel: cancel,
-		in:     make(chan *block.BlockData, constRelayBuf),
+		bus:    make(chan *block.BlockData, relayBusSz),
 		log:    logrus.WithField("relay", short(id)),
 		a:      a,
 	}
 }
 
-type hostData struct {
-	Address string `json:"Address"`
-	Port    uint16 `json:"Port"`
-}
-
 func (r *relay) run() {
+	r.log.Infof("run routine start")
+	defer r.log.Infof("run routine stop")
 	defer r.release()
-
-	r.log.Infof("run routine is start")
-	defer func() {
-		r.log.Infof("run routine is exit")
-	}()
 
 	for {
 		select {
@@ -61,25 +53,30 @@ func (r *relay) run() {
 			err := r.ctx.Err()
 			r.log.Infof("relay closed, %v", err)
 			return
-		case blockData, ok := <-r.in:
+		case blockData, ok := <-r.bus:
 			if !ok {
-				r.log.Infof("r.in is closed")
+				r.log.Infof("r.bus is closed")
 				return
 			}
 
-			r.log.Debugf("recv block, %sv", blockData)
+			r.log.Debugf("recv block, %v", blockData)
 
 			if blockData.Type == block.ConstBlockTypeConnect {
-				var hosts hostData
-				if err := json.Unmarshal(r.a.crypto.DecrypBlocks(blockData.Data), &hosts); err != nil {
-					r.log.Errorf("broken connect block, %v", err)
+				var hosts block.HostData
+				if len(blockData.Data) > 0 {
+					if err := json.Unmarshal(r.a.crypto.DecrypBlocks(blockData.Data), &hosts); err != nil {
+						r.log.Errorf("broken connect block, %v", err)
+						return
+					}
+				} else {
+					r.log.Errorf("broken connect block, without hostdata")
 					return
 				}
 
 				conn, err := net.Dial("tcp", fmt.Sprintf("%v:%v", hosts.Address, hosts.Port))
 				if err != nil {
 					r.log.Errorf("connect remote failed, %v", err)
-					r.a.out <- block.Marshal(&block.BlockData{
+					r.a.bus <- block.Marshal(&block.BlockData{
 						ID:   r.id,
 						Type: block.ConstBlockTypeConnectFailed,
 					})
@@ -87,7 +84,7 @@ func (r *relay) run() {
 				}
 				r.conn = conn
 				r.log = r.log.WithField("conn", r.conn.RemoteAddr())
-				r.a.out <- block.Marshal(&block.BlockData{
+				r.a.bus <- block.Marshal(&block.BlockData{
 					ID:   r.id,
 					Type: block.ConstBlockTypeConnected,
 				})
@@ -98,11 +95,6 @@ func (r *relay) run() {
 					// not connect remote yet
 					// wrong sequence
 					panic("conn is not init yet")
-				}
-
-				if err := r.conn.SetWriteDeadline(time.Now().Add(constRemoteWriteTimeout)); err != nil {
-					r.log.Warnf("set remote write timeout failed, %v", err)
-					return
 				}
 
 				if blockData.Type == block.ConstBlockTypeData {
@@ -123,11 +115,9 @@ func (r *relay) run() {
 }
 
 func (r *relay) write() {
+	r.log.Debugf("write routine start")
+	defer r.log.Debugf("write routine stop")
 	defer r.release()
-	r.log.Infof("write routine is start")
-	defer func() {
-		r.log.Infof("write routine is exit")
-	}()
 
 	var blockNum uint32
 	for {
@@ -136,12 +126,12 @@ func (r *relay) write() {
 			r.log.Infof("write is canceled, %v", r.ctx.Err())
 			return
 		default:
-			buf := make([]byte, constRemoteReadBuf)
+			buf := make([]byte, remoteReadBufSz)
 			n, err := io.ReadAtLeast(r.conn, buf, 1)
 			if err != nil {
 				r.log.Warnf("read from remote failed, %v", err)
 
-				r.a.out <- block.Marshal(&block.BlockData{
+				r.a.bus <- block.Marshal(&block.BlockData{
 					ID:       r.id,
 					BlockNum: blockNum,
 					Type:     block.ConstBlockTypeDisconnect,
@@ -149,7 +139,7 @@ func (r *relay) write() {
 				return
 			}
 
-			r.a.out <- block.Marshal(&block.BlockData{
+			r.a.bus <- block.Marshal(&block.BlockData{
 				ID:       r.id,
 				BlockNum: blockNum,
 				Type:     block.ConstBlockTypeData,
@@ -164,5 +154,5 @@ func (r *relay) release() {
 	r.a.unregisterRelay(r)
 	r.cancel()
 
-	r.log.Info("relay is released")
+	r.log.Infof("relay is released")
 }

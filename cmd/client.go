@@ -23,7 +23,7 @@ func init() {
 
 	clientCmd.Flags().IntVarP(&clp, "localport", "l", 10087, "local proxy port")
 	clientCmd.Flags().StringVarP(&cprotocol, "protocol", "p", "http", "local proxy protocol, currently only support http")
-	clientCmd.Flags().StringVarP(&cserver, "server", "s", "localhost", "remote server addr")
+	clientCmd.Flags().StringVarP(&cserver, "server", "s", "127.0.0.1", "remote server addr")
 	clientCmd.Flags().IntVarP(&crp, "remoteport", "r", 12306, "remote server port")
 	clientCmd.Flags().IntVarP(&cloglevel, "loglevel", "g", 2, "log level; 0->panic, 1->fatal, 2->error, 3->warn, 4->info, 5->debug")
 	// clientCmd.Flags().BoolVar(&ccpuprofile, "cpuprofile", false, "begin cpu profile")
@@ -40,30 +40,13 @@ var clientCmd = &cobra.Command{
 		// 	defer profile.Start().Stop()
 		// }
 
-		// addr = "localhost"
-		// rp = 12306
-		// lp = 10087
-		// protocol = "http"
-
-		conf := proxyServerConf{
-			RemoteProxyConf: client.RemoteProxyConf{
-				// RemotePort:   8654,
-				// RemoteServer: "shark.norgerman.com",
-				RemotePort:   crp,
-				RemoteServer: cserver,
-			},
-			Port:     clp,
-			Protocol: cprotocol,
-		}
-
-		listener, err := net.Listen("tcp", fmt.Sprintf(":%d", conf.Port))
+		listener, err := net.Listen("tcp", fmt.Sprintf(":%v", clp))
 		if err != nil {
 			panic(fmt.Errorf("start client failed, %v", err))
 		}
-
 		log.Infof("local port: %v, remote: %v:%v", clp, cserver, crp)
 
-		m := client.NewManager(conf.RemoteProxyConf, ccoreSz)
+		m := client.NewManager(fmt.Sprintf("%v:%v", cserver, crp), ccoreSz)
 		for {
 			conn, err := listener.Accept()
 			if err != nil {
@@ -74,10 +57,4 @@ var clientCmd = &cobra.Command{
 			go m.Run(conn, "http")
 		}
 	},
-}
-
-type proxyServerConf struct {
-	client.RemoteProxyConf
-	Port     int
-	Protocol string
 }

@@ -67,12 +67,12 @@ Found:
 		strs[1] = strings.TrimLeft(strs[1], "http://")
 		err = errHTTPDegrade
 		remain = read
-		p.pType = constProxyTypeHTTP
+		p.pType = proxyTypeHTTP
 	} else {
 		if len(read) > len(msg) {
 			remain = read[len(msg):]
 		}
-		p.pType = constProxyTypeHTTPS
+		p.pType = proxyTypeHTTPS
 	}
 
 	hosts := strings.SplitN(strs[1], ":", 2)

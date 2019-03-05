@@ -28,8 +28,8 @@ type HostData struct {
 
 type DisconnectData []string
 
-func (b *BlockData) String() string {
-	return fmt.Sprintf("%v:%v:%v:%v", b.ID, b.Type, b.BlockNum, b.Length)
+func (b BlockData) String() string {
+	return fmt.Sprintf("%v:%v:%v:%v", fmt.Sprintf("%x", b.ID)[:8], b.Type, b.BlockNum, b.Length)
 }
 
 // NewGUID returns uuid v4

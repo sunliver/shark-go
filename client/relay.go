@@ -1,19 +1,16 @@
 package client
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"net"
 	"sync"
-	"sync/atomic"
 	"time"
 
-	"github.com/sunliver/shark/lib/crypto"
-
 	uuid "github.com/satori/go.uuid"
-	log "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 	"github.com/sunliver/shark/lib/block"
+	"github.com/sunliver/shark/lib/crypto"
 )
 
 const (
@@ -22,126 +19,91 @@ const (
 )
 
 const (
-	constStatusHandShaking = iota
-	constStatusIdle
-	constStatusRunning
-	constStatusClosed
+	relayBusSz = 64
 )
 
 // relay struct
 // connect with remote server
 type relay struct {
-	ID      uuid.UUID
-	conn    *net.TCPConn
-	Status  int
-	Lasterr error
-	mutex   sync.Mutex
-	readOBs map[uuid.UUID]*agent
-	crypto  *crypto.Crypto
-	rls     sync.Once
+	ID     uuid.UUID
+	conn   net.Conn
+	bus    chan []byte
+	crypto *crypto.Crypto
+	log    logrus.FieldLogger
+	mutex  sync.Mutex
+	agents map[uuid.UUID]*agent
 }
 
-// RemoteProxyConf configuration of remote server
-type RemoteProxyConf struct {
-	RemoteServer string
-	RemotePort   int
-}
+func newRelay(remote string) (*relay, error) {
+	conn, err := net.Dial("tcp", remote)
+	if err != nil {
+		return nil, fmt.Errorf("init to remote server failed, err: %v", err)
+	}
 
-func (conf *RemoteProxyConf) String() string {
-	return fmt.Sprintf("%v:%v", conf.RemoteServer, conf.RemotePort)
-}
-
-var errClose = errors.New("relay: closed")
-
-// initClient returns client to connect proxy server;
-// tcp connection
-func initClient(conf RemoteProxyConf) (*relay, error) {
+	id := uuid.NewV4()
 	c := &relay{
-		ID: uuid.NewV4(),
-	}
-	c.readOBs = make(map[uuid.UUID]*agent)
-
-	tcpAddr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", conf.RemoteServer, conf.RemotePort))
-	if err != nil {
-		c.Lasterr = fmt.Errorf("resolve remote addr failed, err: %v", err)
-		return c, c.Lasterr
+		ID:     id,
+		conn:   conn,
+		agents: make(map[uuid.UUID]*agent),
+		bus:    make(chan []byte, relayBusSz),
+		log:    logrus.WithField("relay", short(id)).WithField("conn", conn.RemoteAddr()),
 	}
 
-	conn, err := net.DialTCP("tcp", nil, tcpAddr)
-	if err != nil {
-		c.Lasterr = fmt.Errorf("init to remote server failed, err: %v", err)
-		return c, c.Lasterr
-	}
-
-	c.conn = conn
-
-	if err := c.conn.SetKeepAlive(true); err != nil {
-		c.Lasterr = fmt.Errorf("set keep alive failed, err: %v", err)
-		return c, c.Lasterr
-	}
-
-	c.Status = constStatusHandShaking
-
-	// TODO client lifecycle
 	if err := c.handshake(); err != nil {
-		c.Lasterr = err
-		return c, c.Lasterr
+		c.log.Errorf("handshake failed, %v", err)
+		return c, err
 	}
 
-	c.Lasterr = nil
-	c.Status = constStatusRunning
-	go c.beginRead()
+	go c.read()
+	go c.write()
 
-	return c, c.Lasterr
+	return c, nil
 }
 
 // handshake do handshake with remote proxy server
-// deal with ConstBlockTypeHandShake, ConstBlockTypeHandShakeResponse, ConstBlockTypeHandShakeFinal
 func (c *relay) handshake() error {
-	if _, err := c.conn.Write(block.Marshal(&block.BlockData{
-		Type: block.ConstBlockTypeHandShake,
-	})); err != nil {
-		log.Errorf("[relay %v] handshake with remote server faild, err: %v", c.ID, err)
-		c.Lasterr = err
-		return c.Lasterr
-	}
+	// step1: send syn
+	{
+		if _, err := c.conn.Write(block.Marshal(&block.BlockData{
+			Type: block.ConstBlockTypeHandShake,
+		})); err != nil {
+			return err
+		}
 
-	buf := make([]byte, block.ConstBlockHeaderSzB)
+		buf := make([]byte, block.ConstBlockHeaderSzB)
+		if n, err := io.ReadFull(c.conn, buf); err != nil || n < len(buf) {
+			return err
+		}
 
-	if n, err := io.ReadFull(c.conn, buf); err != nil || n < block.ConstBlockHeaderSzB {
-		log.Errorf("[relay %v] read handshake failed, err: %v", c.ID, err)
-		c.Lasterr = err
-		return c.Lasterr
-	}
-
-	if blockdata, err := block.UnMarshalHeader(buf); err != nil || blockdata.Type != block.ConstBlockTypeHandShake {
-		log.Errorf("[relay %v] error handshake msg", c.ID)
-		c.Lasterr = errors.New("err handshake msg")
-		return c.Lasterr
+		if blockData, err := block.UnMarshalHeader(buf); err != nil || blockData.Type != block.ConstBlockTypeHandShake {
+			return err
+		}
 	}
 
 	passwd := []byte(block.NewGUID().String())
 
-	if _, err := c.conn.Write(block.Marshal(&block.BlockData{
-		ID:   block.NewGUID(),
-		Type: block.ConstBlockTypeHandShakeResponse,
-		Data: passwd,
-	})); err != nil {
-		log.Errorf("[relay %v] send handshake resp failed, err: %v", c.ID, err)
-		c.Lasterr = err
-		return c.Lasterr
+	// step2: send pass negotiation
+	{
+		if _, err := c.conn.Write(block.Marshal(&block.BlockData{
+			ID:   block.NewGUID(),
+			Type: block.ConstBlockTypeHandShakeResponse,
+			Data: passwd,
+		})); err != nil {
+			return err
+		}
 	}
 
-	if n, err := io.ReadFull(c.conn, buf); err != nil || n < block.ConstBlockHeaderSzB {
-		log.Errorf("[relay %v] read handshake resp failed, err: %v", c.ID, err)
-		c.Lasterr = err
-		return c.Lasterr
-	}
+	// step3: recv handshake final
+	{
+		buf := make([]byte, block.ConstBlockHeaderSzB)
 
-	if blockdata, err := block.UnMarshalHeader(buf); err != nil || blockdata.Type != block.ConstBlockTypeHandShakeFinal {
-		log.Errorf("[relay %v] err handshake final msg", c.ID)
-		c.Lasterr = errors.New("err handshake final msg")
-		return c.Lasterr
+		if n, err := io.ReadFull(c.conn, buf); err != nil || n < len(buf) {
+			return err
+		}
+
+		if blockData, err := block.UnMarshalHeader(buf); err != nil || blockData.Type != block.ConstBlockTypeHandShakeFinal {
+			return err
+		}
 	}
 
 	c.crypto = crypto.NewCrypto(passwd)
@@ -149,96 +111,94 @@ func (c *relay) handshake() error {
 	return nil
 }
 
-func (c *relay) beginRead() {
+func (c *relay) read() {
+	c.log.Infof("read routine start")
+	defer c.log.Infof("read routine stop")
 	defer c.release()
 
 	for {
-		header := make([]byte, block.ConstBlockHeaderSzB)
-		if n, err := io.ReadFull(c.conn, header); err != nil || n < block.ConstBlockHeaderSzB {
-			log.Warnf("[relay %v] read header failed, err: %v", c.ID, err)
-			c.Lasterr = err
+		buf := make([]byte, block.ConstBlockHeaderSzB)
+		if n, err := io.ReadFull(c.conn, buf); err != nil || n < len(buf) {
+			c.log.Warnf("read header failed, %v", err)
 			return
 		}
 
-		blockData, err := block.UnMarshalHeader(header)
+		blockData, err := block.UnMarshalHeader(buf)
 		if err != nil {
-			log.Errorf("[relay %v] unmarshal datablock failed, err: %v", c.ID, err)
-			c.Lasterr = err
-			// drop the connection
+			c.log.Errorf("broken header, %v", err)
 			return
 		}
-
-		log.Debugf("[relay %v] recv %s", c.ID, blockData)
 
 		if blockData.Length > 0 {
 			body := make([]byte, blockData.Length)
 			if n, err := io.ReadFull(c.conn, body); err != nil || n < int(blockData.Length) {
-				log.Errorf("[relay %v] read body failed, err: %v", c.ID, err)
-				c.Lasterr = err
+				c.log.Warnf("read body failed, %v", err)
 				return
 			}
 
 			blockData.Data = c.crypto.DecrypBlocks(body)
-			blockData.Length = int32(len(blockData.Data))
 		}
 
-		if ob, ok := c.readOBs[blockData.ID]; ok {
-			go ob.onRead(atomic.AddUint64(ob.ticket, 1)-1, blockData, nil)
+		c.log.Debugf("recv block: %v", blockData)
+
+		if ob, ok := c.agents[blockData.ID]; ok {
+			// TODO add time out
+			ob.bus <- blockData
 		}
 	}
 }
 
-func (c *relay) Write(blockdata *block.BlockData) (int, error) {
-	if c.Status != constStatusRunning {
-		return 0, fmt.Errorf("[relay %v] client is not running", c.ID)
-	}
+func (c *relay) write() {
+	c.log.Infof("write routine start")
+	defer c.log.Infof("write routine stop")
+	defer c.release()
 
-	if err := c.conn.SetWriteDeadline(time.Now().Add(constWriteTimeoutS)); err != nil {
-		c.release()
-		return 0, err
+	for b := range c.bus {
+		if n, err := c.conn.Write(b); err != nil || n < len(b) {
+			c.log.Warnf("write to remote failed, %v", err)
+			return
+		}
 	}
-
-	if len(blockdata.Data) > 0 {
-		blockdata.Data = c.crypto.CryptBlocks(blockdata.Data)
-	}
-	b := block.Marshal(blockdata)
-	log.Debugf("[relay %v] send %s", c.ID, blockdata)
-	return c.conn.Write(b)
 }
 
-// RegisterObserver when receiving msgs, client will decode it and give to interested observers
-func (c *relay) RegisterObserver(a *agent) error {
+// registerAgent when receiving msgs, client will decode it and give to interested observers
+func (c *relay) registerAgent(a *agent) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	if _, ok := c.readOBs[a.ID]; ok {
-		return fmt.Errorf("[relay %v] duplicate observer, %v", c.ID, a)
+	if c.agents == nil {
+		return
 	}
 
-	c.readOBs[a.ID] = a
-	return nil
+	c.agents[a.ID] = a
+	return
 }
 
-// UnRegisterObserver stop receive msg from client
-func (c *relay) UnRegisterObserver(a *agent) {
+// unregisterAgent stop receive msg from client
+func (c *relay) unregisterAgent(a *agent) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	delete(c.readOBs, a.ID)
+	if c.agents == nil {
+		return
+	}
+
+	delete(c.agents, a.ID)
 }
 
 // release notify observers I'm out
 func (c *relay) release() {
-	c.rls.Do(func() {
-		c.Lasterr = errClose
-		for id, ob := range c.readOBs {
-			log.Debugf("[relay %v] %v i'm closing", c.ID, id)
-			ob.onRead(atomic.AddUint64(ob.ticket, 1)-1, nil, errClose)
-		}
-		c.readOBs = nil
-		c.conn.Close()
-		c.Status = constStatusClosed
-	})
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	if c.agents == nil {
+		return
+	}
 
-	log.Debugf("[relay %v] client is released", c.ID)
+	for _, ob := range c.agents {
+		ob.bus <- nil
+	}
+	c.agents = nil
+	c.conn.Close()
+
+	c.log.Infof("relay is closed")
 }
