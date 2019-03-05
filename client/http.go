@@ -83,7 +83,7 @@ Found:
 		port, _ = strconv.Atoi(hosts[1])
 	}
 
-	hostdata, _ := json.Marshal(hostData{
+	hostdata, _ := json.Marshal(block.HostData{
 		Address: address,
 		Port:    uint16(port),
 	})

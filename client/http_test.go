@@ -30,7 +30,7 @@ func TestHTTPHandShakeOK(t *testing.T) {
 
 	proxy := &httpProxy{}
 	blockdata, remain, err := proxy.handShake(client)
-	hostdata, _ := json.Marshal(hostData{
+	hostdata, _ := json.Marshal(block.HostData{
 		Address: "www.sunliver.com",
 		Port:    uint16(80),
 	})
@@ -48,7 +48,7 @@ func TestHTTPSHandShakeOK(t *testing.T) {
 
 	proxy := &httpProxy{}
 	blockdata, remain, err := proxy.handShake(client)
-	hostdata, _ := json.Marshal(hostData{
+	hostdata, _ := json.Marshal(block.HostData{
 		Address: "www.sunliver.com",
 		Port:    uint16(80),
 	})

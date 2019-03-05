@@ -12,19 +12,6 @@ import (
 	"github.com/sunliver/shark/lib/block"
 )
 
-// agent handle connection from local
-// send messages via relay
-type agent struct {
-	ID        uuid.UUID
-	c         *relay
-	conn      net.Conn
-	proxy     proxy
-	writechan chan *block.BlockData
-	rls       sync.Once
-	ticket    *uint64
-	done      *uint64
-}
-
 const (
 	constProxyTypeHTTP = iota
 	constProxyTypeHTTPS
@@ -40,107 +27,112 @@ type proxy interface {
 	T() int
 }
 
-type hostData struct {
-	Address string `json:"Address"`
-	Port    uint16 `json:"Port"`
+// agent handle connection from local
+// send messages via relay
+type agent struct {
+	ID        uuid.UUID
+	r         *relay
+	conn      net.Conn
+	proxy     proxy
+	writechan chan *block.BlockData
+	rls       sync.Once
+	ticket    *uint64
+	done      *uint64
 }
 
-// ServerProxy handle proxy connections
-func ServerProxy(p string, conn net.Conn, c *relay) {
-	p = "http"
-	pc := &agent{
+func newAgent(conn net.Conn, p string, r *relay) *agent {
+	return &agent{
 		ID:        block.NewGUID(),
 		proxy:     &httpProxy{},
-		c:         c,
 		conn:      conn,
+		r:         r,
 		writechan: make(chan *block.BlockData),
 		ticket:    new(uint64),
 		done:      new(uint64),
 	}
+}
 
-	for pc.c.RegisterObserver(pc) != nil {
-		pc.ID = block.NewGUID()
-	}
-	pc.start()
+func (a *agent) run() {
+	a.start()
 }
 
 // start agent start accept requests
-func (pc *agent) start() {
-	blockdata, remain, err := pc.proxy.handShake(pc.conn)
+func (a *agent) start() {
+	blockData, remain, err := a.proxy.handShake(a.conn)
 	if err != nil && err != errHTTPDegrade {
 		log.Errorf("[agent] get proxy handshake msg failed, err: %v", err)
-		pc.release()
+		a.release()
 		return
 	}
 
-	log.Infof("[agent] send handshake msg, %v", string(blockdata.Data))
+	log.Infof("[agent] send handshake msg, %v", string(blockData.Data))
 
-	blockdata.ID = pc.ID
-	if _, err := pc.c.Write(blockdata); err != nil {
+	blockData.ID = a.ID
+	if _, err := a.r.Write(blockData); err != nil {
 		log.Warnf("[agent] send handshake msg failed, err: %v", err)
-		pc.release()
+		a.release()
 		return
 	}
 
 	// wait connected resp
-	data := <-pc.writechan
+	data := <-a.writechan
 
 	if data.Type == block.ConstBlockTypeConnected {
-		if pc.proxy.T() == constProxyTypeHTTPS {
-			if err := pc.writeToLocal(pc.proxy.handShakeResp()); err != nil {
-				pc.release()
+		if a.proxy.T() == constProxyTypeHTTPS {
+			if err := a.writeToLocal(a.proxy.handShakeResp()); err != nil {
+				a.release()
 				return
 			}
 			log.Infof("[agent] write handshake resp")
 		}
 	} else if data.Type == block.ConstBlockTypeConnectFailed {
 		log.Infof("[agent] recv connect failed, %s", data)
-		pc.release()
+		a.release()
 		return
 	} else {
-		log.Errorf("[agent] unknown data, %v:%v:%v:%v", blockdata.ID, blockdata.Type, blockdata.BlockNum, blockdata.Length)
-		pc.release()
+		log.Errorf("[agent] unknown data, %v:%v:%v:%v", blockData.ID, blockData.Type, blockData.BlockNum, blockData.Length)
+		a.release()
 		return
 	}
 
 	// send http remain
-	if _, err := pc.c.Write(&block.BlockData{
-		ID:   pc.ID,
+	if _, err := a.r.Write(&block.BlockData{
+		ID:   a.ID,
 		Type: block.ConstBlockTypeData,
 		Data: remain,
 	}); err != nil {
 		log.Errorf("[agent] send http msg failed, err: %v", err)
-		pc.release()
+		a.release()
 		return
 	}
 
-	go pc.beginRead()
-	go pc.write()
+	go a.beginRead()
+	go a.write()
 }
 
-func (pc *agent) release() {
-	pc.rls.Do(func() {
-		pc.c.UnRegisterObserver(pc)
-		pc.conn.Close()
+func (a *agent) release() {
+	a.rls.Do(func() {
+		a.r.UnRegisterObserver(a)
+		a.conn.Close()
 	})
 
-	log.Infof("[agent] %v released", pc.ID)
+	log.Infof("[agent] %v released", a.ID)
 }
 
-func (pc *agent) beginRead() {
-	log.Debugf("[agent] %v begin read", pc.ID)
-	defer pc.release()
+func (a *agent) beginRead() {
+	log.Debugf("[agent] %v begin read", a.ID)
+	defer a.release()
 
 	for {
 		buf := make([]byte, 4096)
-		n, err := io.ReadAtLeast(pc.conn, buf, 1)
+		n, err := io.ReadAtLeast(a.conn, buf, 1)
 		if err != nil {
 			log.Infof("[agent] read from local failed, err: %v", err)
 			break
 		}
 
-		if _, err := pc.c.Write(&block.BlockData{
-			ID:   pc.ID,
+		if _, err := a.r.Write(&block.BlockData{
+			ID:   a.ID,
 			Type: block.ConstBlockTypeData,
 			Data: buf[:n],
 		}); err != nil {
@@ -150,24 +142,24 @@ func (pc *agent) beginRead() {
 	}
 }
 
-func (pc *agent) onRead(ticket uint64, data *block.BlockData, err error) {
-	for !atomic.CompareAndSwapUint64(pc.done, ticket, ticket) {
+func (a *agent) onRead(ticket uint64, data *block.BlockData, err error) {
+	for !atomic.CompareAndSwapUint64(a.done, ticket, ticket) {
 		runtime.Gosched()
 	}
 
 	if err != nil {
 		log.Infof("[agent] client is closed, err: %v", err)
-		pc.release()
+		a.release()
 		return
 	}
 
-	pc.writechan <- data
-	atomic.AddUint64(pc.done, 1)
+	a.writechan <- data
+	atomic.AddUint64(a.done, 1)
 }
 
-func (pc *agent) write() {
-	log.Debugf("[agent] %v begin write", pc.ID)
-	defer pc.release()
+func (a *agent) write() {
+	log.Debugf("[agent] %v begin write", a.ID)
+	defer a.release()
 	defer func() {
 		if err := recover(); err != nil {
 			log.Errorf("recover from panic, err: %v", err)
@@ -176,9 +168,9 @@ func (pc *agent) write() {
 
 	for {
 		select {
-		case data := <-pc.writechan:
+		case data := <-a.writechan:
 			if data.Type == block.ConstBlockTypeData {
-				if err := pc.writeToLocal(data.Data); err != nil {
+				if err := a.writeToLocal(data.Data); err != nil {
 					return
 				}
 			} else if data.Type == block.ConstBlockTypeDisconnect {
@@ -189,9 +181,9 @@ func (pc *agent) write() {
 	}
 }
 
-func (pc *agent) writeToLocal(b []byte) error {
+func (a *agent) writeToLocal(b []byte) error {
 	for {
-		n, err := pc.conn.Write(b)
+		n, err := a.conn.Write(b)
 		if err != nil {
 			log.Warnf("[agent] write data to local failed, err: %v", err)
 			return err

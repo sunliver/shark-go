@@ -49,14 +49,14 @@ func TestAgentOK(t *testing.T) {
 		pc := &agent{
 			ID:        block.NewGUID(),
 			proxy:     &httpProxy{},
-			c:         localclient,
+			r:         localclient,
 			conn:      client,
 			writechan: make(chan *block.BlockData),
 			ticket:    new(uint64),
 			done:      new(uint64),
 		}
 
-		for pc.c.RegisterObserver(pc) != nil {
+		for pc.r.RegisterObserver(pc) != nil {
 			pc.ID = block.NewGUID()
 		}
 

@@ -2,8 +2,11 @@ package client
 
 import (
 	"container/list"
+	"net"
 	"sync"
 	"time"
+
+	"github.com/sunliver/shark/lib/block"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -11,7 +14,7 @@ import (
 type Manager struct {
 	clients    *list.List
 	coreSz     int
-	mutex      *sync.RWMutex
+	mutex      sync.RWMutex
 	conf       RemoteProxyConf
 	retryCnt   int
 	retryDelay time.Duration
@@ -20,13 +23,13 @@ type Manager struct {
 func NewManager(conf RemoteProxyConf, coreSz int) *Manager {
 	m := &Manager{
 		clients:    list.New(),
-		mutex:      &sync.RWMutex{},
 		coreSz:     coreSz,
 		conf:       conf,
 		retryCnt:   10,
 		retryDelay: time.Second * 1,
 	}
 
+	// TODO lazy loading
 	go m.initPool()
 
 	return m
@@ -36,8 +39,26 @@ func GetSingleClient(conf RemoteProxyConf) (*relay, error) {
 	return initClient(conf)
 }
 
+func (m *Manager) Run(conn net.Conn, p string) {
+	c, err := m.getClient()
+	if err != nil {
+		// TODO
+		// log.Errorf("connect with remote failed, %v", err)
+		conn.Close()
+		return
+	}
+
+	a := newAgent(conn, p, c)
+
+	for a.r.RegisterObserver(a) != nil {
+		a.ID = block.NewGUID()
+	}
+
+	go a.start()
+}
+
 // GetClient return a localclient which is ready to recv connections
-func (m *Manager) GetClient() *relay {
+func (m *Manager) getClient() (*relay, error) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
@@ -56,17 +77,22 @@ func (m *Manager) GetClient() *relay {
 	}
 
 	if m.clients.Len() == 0 || m.coreSz == -1 {
+		var e error
 		for i := 0; i < m.retryCnt; i++ {
 			cc, err := initClient(m.conf)
 			if err != nil {
-				panic(err)
+				e = err
+				continue
 			}
-
 			if m.coreSz != -1 {
 				m.clients.PushBack(cc)
 			}
 			c = cc
+			e = nil
 			break
+		}
+		if e != nil {
+			return nil, e
 		}
 	}
 
@@ -74,7 +100,7 @@ func (m *Manager) GetClient() *relay {
 		go m.initPool()
 	}
 
-	return c
+	return c, nil
 }
 
 func (m *Manager) initPool() {
@@ -89,6 +115,7 @@ func (m *Manager) initPool() {
 			if err != nil {
 				log.Errorf("[Manager] init client failed, retrying %v", i)
 				time.Sleep(m.retryDelay * time.Duration(2<<uint32(i)))
+				continue
 			}
 
 			m.mutex.Lock()
@@ -97,7 +124,8 @@ func (m *Manager) initPool() {
 			break
 		}
 		if i == m.retryCnt {
-			panic("error connecting remote server")
+			log.Errorf("connect remote failed")
+			return
 		}
 	}
 }

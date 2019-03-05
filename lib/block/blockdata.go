@@ -21,6 +21,11 @@ type BlockData struct {
 	Data        []byte
 }
 
+type HostData struct {
+	Address string `json:"Address"`
+	Port    uint16 `json:"Port"`
+}
+
 type DisconnectData []string
 
 func (b *BlockData) String() string {
