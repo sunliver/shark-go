@@ -3,120 +3,118 @@ package client
 import (
 	"container/list"
 	"context"
+	"fmt"
 	"net"
+	"runtime"
 	"sync"
 	"time"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 )
 
+// Manager relay pool manager
+// TODO add idle timeout and remove the relay
 type Manager struct {
+	ctx        context.Context
 	clients    *list.List
-	coreSz     int
-	mutex      sync.RWMutex
 	remote     string
+	coreSz     int
 	retryCnt   int
 	retryDelay time.Duration
+	mutex      sync.Mutex
+	cancel     func()
+	log        logrus.FieldLogger
 }
 
-func NewManager(remote string, coreSz int) *Manager {
-	m := &Manager{
-		clients:    list.New(),
-		coreSz:     coreSz,
-		remote:     remote,
-		retryCnt:   10,
-		retryDelay: time.Second * 1,
+// NewManager init relay pool manager with a fixed size
+func NewManager(coreSz int, remote string) *Manager {
+	c, cancel := context.WithCancel(context.Background())
+
+	if coreSz < 0 {
+		coreSz = runtime.NumCPU()
 	}
 
-	// TODO lazy loading
-	go m.initPool()
-
-	return m
+	return &Manager{
+		ctx:        c,
+		clients:    list.New(),
+		remote:     remote,
+		coreSz:     coreSz,
+		retryCnt:   5,
+		retryDelay: time.Second * 1,
+		cancel:     cancel,
+		log:        logrus.WithField("manager", "1"),
+	}
 }
 
-func (m *Manager) Run(conn net.Conn, p string) {
+// Run accept a new conn with target proxy protocol
+func (m *Manager) Run(conn net.Conn, protocol string) {
 	c, err := m.getClient()
 	if err != nil {
-		// TODO
-		// log.Errorf("connect with remote failed, %v", err)
 		conn.Close()
 		return
 	}
 
-	a := newAgent(conn, p, c)
-
-	go a.run()
+	a := newAgent(conn, protocol, c)
+	a.run()
 }
 
-// GetClient return a localclient which is ready to recv connections
+// Cancel cancel all hold relay
+func (m *Manager) Cancel() {
+	m.cancel()
+}
+
+// getClient return a relay which is ready to recv connections
 func (m *Manager) getClient() (*relay, error) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	var c *relay
-
-	for m.clients.Len() > 0 {
+	// rm closed relay
+	if m.clients.Len() > 0 {
 		e := m.clients.Front()
-		if e.Value == nil {
-			m.clients.Remove(e)
-			continue
-		} else {
-			m.clients.MoveToBack(e)
-			c = e.Value.(*relay)
-			break
+		for {
+			n := e.Next()
+			r, ok := e.Value.(*relay)
+			if !ok || r.closed {
+				m.clients.Remove(e)
+			}
+			if n == nil {
+				break
+			}
+			e = n
 		}
 	}
 
-	if m.clients.Len() == 0 || m.coreSz == -1 {
-		var e error
-		for i := 0; i < m.retryCnt; i++ {
-			cc, err := newRelay(context.Background(), m.remote)
-			if err != nil {
-				e = err
-				continue
-			}
-			if m.coreSz != -1 {
-				m.clients.PushBack(cc)
-			}
-			c = cc
-			e = nil
-			break
-		}
-		if e != nil {
-			return nil, e
-		}
-	}
-
+	// reinit relay pool
 	if m.clients.Len() < m.coreSz {
-		go m.initPool()
+		if err := m.initPool(); err != nil {
+			return nil, err
+		}
 	}
 
-	return c, nil
+	e := m.clients.Front()
+	m.clients.PushBack(e)
+
+	return e.Value.(*relay), nil
 }
 
-func (m *Manager) initPool() {
-	if m.coreSz == -1 {
-		return
-	}
-
+func (m *Manager) initPool() error {
 	for m.clients.Len() < m.coreSz {
 		i := 0
 		for ; i < m.retryCnt; i++ {
-			c, err := newRelay(context.Background(), m.remote)
+			r, err := newRelay(m.ctx, m.remote)
 			if err != nil {
-				log.Errorf("[Manager] init client failed, %v, retrying %v", err, i)
-				time.Sleep(m.retryDelay * time.Duration(2<<uint32(i)))
+				time.Sleep(m.retryDelay)
+				m.log.Errorf("retry %v: init client failed, %v", i, err)
 				continue
 			}
 
-			m.mutex.Lock()
-			m.clients.PushBack(c)
-			m.mutex.Unlock()
+			m.clients.PushBack(r)
 			break
 		}
 		if i == m.retryCnt {
-			log.Errorf("connect remote failed")
-			return
+			return fmt.Errorf("init client failed too manay times")
 		}
 	}
+
+	return nil
 }

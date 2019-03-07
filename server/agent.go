@@ -57,8 +57,8 @@ func (a *Agent) Run() {
 }
 
 func (a *Agent) read() {
-	a.log.Infof("read routine start")
-	defer a.log.Infof("read routine stop")
+	a.log.Debugf("read routine start")
+	defer a.log.Debugf("read routine stop")
 	defer a.release()
 
 	for {
@@ -183,7 +183,7 @@ func (a *Agent) registerRelay(r *relay) {
 
 	a.relays[r.id] = r
 
-	a.log.Infof("relay is registered, %v", short(r.id))
+	a.log.Debugf("relay is registered, %v", short(r.id))
 }
 
 func (a *Agent) unregisterRelay(r *relay) {
@@ -192,7 +192,7 @@ func (a *Agent) unregisterRelay(r *relay) {
 
 	delete(a.relays, r.id)
 
-	a.log.Infof("relay is unregistered, %v", short(r.id))
+	a.log.Debugf("relay is unregistered, %v", short(r.id))
 }
 
 func (a *Agent) release() {
@@ -200,7 +200,7 @@ func (a *Agent) release() {
 	a.conn.Close()
 	a.relays = nil
 
-	a.log.Infof("agent is closed")
+	a.log.Debugf("agent is closed")
 }
 
 func short(id uuid.UUID) string {

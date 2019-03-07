@@ -43,8 +43,8 @@ func newRelay(a *Agent, id uuid.UUID) *relay {
 }
 
 func (r *relay) run() {
-	r.log.Infof("run routine start")
-	defer r.log.Infof("run routine stop")
+	r.log.Debugf("run routine start")
+	defer r.log.Debugf("run routine stop")
 	defer r.release()
 
 	for {
@@ -154,5 +154,5 @@ func (r *relay) release() {
 	r.a.unregisterRelay(r)
 	r.cancel()
 
-	r.log.Infof("relay is released")
+	r.log.Debugf("relay is released")
 }

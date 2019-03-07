@@ -35,6 +35,7 @@ type relay struct {
 	mutex  sync.Mutex
 	agents map[uuid.UUID]*agent
 	cancel func()
+	closed bool
 }
 
 func newRelay(ctx context.Context, remote string) (*relay, error) {
@@ -118,8 +119,8 @@ func (c *relay) handshake() error {
 }
 
 func (c *relay) read() {
-	c.log.Infof("read routine start")
-	defer c.log.Infof("read routine stop")
+	c.log.Debugf("read routine start")
+	defer c.log.Debugf("read routine stop")
 	defer c.release()
 
 	for {
@@ -161,8 +162,8 @@ func (c *relay) read() {
 }
 
 func (c *relay) write() {
-	c.log.Infof("write routine start")
-	defer c.log.Infof("write routine stop")
+	c.log.Debugf("write routine start")
+	defer c.log.Debugf("write routine stop")
 	defer c.release()
 
 	for {
@@ -201,11 +202,12 @@ func (c *relay) unregisterAgent(a *agent) {
 
 // release notify observers I'm out
 func (c *relay) release() {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-
 	c.cancel()
 	c.conn.Close()
 
-	c.log.Infof("relay is closed")
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	c.closed = true
+
+	c.log.Debugf("relay is closed")
 }

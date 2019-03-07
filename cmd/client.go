@@ -46,7 +46,7 @@ var clientCmd = &cobra.Command{
 		}
 		log.Infof("local port: %v, remote: %v:%v", clp, cserver, crp)
 
-		m := client.NewManager(fmt.Sprintf("%v:%v", cserver, crp), ccoreSz)
+		m := client.NewManager(ccoreSz, fmt.Sprintf("%v:%v", cserver, crp))
 		for {
 			conn, err := listener.Accept()
 			if err != nil {

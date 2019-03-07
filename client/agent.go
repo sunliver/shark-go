@@ -93,8 +93,8 @@ func (a *agent) run() {
 }
 
 func (a *agent) read() {
-	a.log.Infof("read routine start")
-	defer a.log.Infof("read routine stop")
+	a.log.Debugf("read routine start")
+	defer a.log.Debugf("read routine stop")
 	defer a.release()
 
 	for {
@@ -106,8 +106,8 @@ func (a *agent) read() {
 			buf := make([]byte, 4096)
 			n, err := io.ReadAtLeast(a.conn, buf, 1)
 			if err != nil {
-				a.log.Warnf("[agent] read from local failed, err: %v", err)
-				break
+				a.log.Warnf("read from local failed, err: %v", err)
+				return
 			}
 
 			a.r.bus <- block.Marshal(&block.BlockData{
@@ -120,8 +120,8 @@ func (a *agent) read() {
 }
 
 func (a *agent) write() {
-	a.log.Infof("write routine start")
-	defer a.log.Infof("write routine stop")
+	a.log.Debugf("write routine start")
+	defer a.log.Debugf("write routine stop")
 	defer a.release()
 
 	for {
@@ -136,7 +136,8 @@ func (a *agent) write() {
 			}
 
 			if data.Type == block.ConstBlockTypeData {
-				if n, err := a.conn.Write(a.r.crypto.DecrypBlocks(data.Data)); err != nil || n < len(data.Data) {
+				d := a.r.crypto.DecrypBlocks(data.Data)
+				if n, err := a.conn.Write(d); err != nil || n < len(d) {
 					a.log.Warnf("write back failed, %v", err)
 					return
 				}
@@ -155,7 +156,7 @@ func (a *agent) release() {
 	a.r.unregisterAgent(a)
 	a.conn.Close()
 
-	a.log.Infof("agent is closed")
+	a.log.Debugf("agent is closed")
 }
 
 func short(id uuid.UUID) string {
