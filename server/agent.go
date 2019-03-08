@@ -20,7 +20,7 @@ type Agent struct {
 	log    logrus.FieldLogger
 	bus    chan []byte
 	relays map[uuid.UUID]*relay
-	mutex  sync.Mutex
+	mu     sync.RWMutex
 	ctx    context.Context
 	cancel func()
 }
@@ -93,8 +93,10 @@ func (a *Agent) read() {
 				relay.bus <- blockData
 			} else {
 				a.registerRelay(newRelay(a, blockData.ID))
+				a.mu.RLock()
 				go a.relays[blockData.ID].run()
 				a.relays[blockData.ID].bus <- blockData
+				a.mu.RUnlock()
 			}
 		}
 	}
@@ -178,8 +180,8 @@ func (a *Agent) handShake() error {
 }
 
 func (a *Agent) registerRelay(r *relay) {
-	a.mutex.Lock()
-	defer a.mutex.Unlock()
+	a.mu.Lock()
+	defer a.mu.Unlock()
 
 	a.relays[r.id] = r
 
@@ -187,8 +189,8 @@ func (a *Agent) registerRelay(r *relay) {
 }
 
 func (a *Agent) unregisterRelay(r *relay) {
-	a.mutex.Lock()
-	defer a.mutex.Unlock()
+	a.mu.Lock()
+	defer a.mu.Unlock()
 
 	delete(a.relays, r.id)
 

@@ -32,7 +32,7 @@ type relay struct {
 	bus    chan []byte
 	crypto *crypto.Crypto
 	log    logrus.FieldLogger
-	mutex  sync.Mutex
+	mu     sync.RWMutex
 	agents map[uuid.UUID]*agent
 	cancel func()
 	closed bool
@@ -153,10 +153,12 @@ func (c *relay) read() {
 
 			c.log.Debugf("recv block: %v", blockData)
 
+			c.mu.RLock()
 			if ob, ok := c.agents[blockData.ID]; ok {
 				// TODO add time out
 				ob.bus <- blockData
 			}
+			c.mu.RUnlock()
 		}
 	}
 }
@@ -186,16 +188,16 @@ func (c *relay) write() {
 
 // registerAgent when receiving msgs, client will decode it and give to interested observers
 func (c *relay) registerAgent(a *agent) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	c.agents[a.ID] = a
 }
 
 // unregisterAgent stop receive msg from client
 func (c *relay) unregisterAgent(a *agent) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	delete(c.agents, a.ID)
 }
@@ -205,8 +207,8 @@ func (c *relay) release() {
 	c.cancel()
 	c.conn.Close()
 
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.closed = true
 
 	c.log.Debugf("relay is closed")
