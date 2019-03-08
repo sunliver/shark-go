@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/pkg/profile"
+
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/sunliver/shark/server"
@@ -26,6 +28,19 @@ var serverCmd = &cobra.Command{
 	Use:   "server",
 	Short: "shark server",
 	Run: func(cmd *cobra.Command, args []string) {
+		switch enableProfile {
+		case "cpu":
+			defer profile.Start(profile.CPUProfile).Stop()
+		case "mem":
+			defer profile.Start(profile.MemProfile).Stop()
+		case "mutex":
+			defer profile.Start(profile.MutexProfile).Stop()
+		case "block":
+			defer profile.Start(profile.BlockProfile).Stop()
+		case "trace":
+			defer profile.Start(profile.TraceProfile).Stop()
+		}
+
 		log.SetLevel(log.Level(sLoglevel))
 
 		l, err := net.Listen("tcp", fmt.Sprintf("%v:%v", sAddr, sPort))

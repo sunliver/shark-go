@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/pkg/profile"
+
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/sunliver/shark/client"
@@ -16,8 +18,6 @@ var crp int
 var cloglevel int
 var ccoreSz int
 
-// var ccpuprofile bool
-
 func init() {
 	rootCmd.AddCommand(clientCmd)
 
@@ -26,7 +26,6 @@ func init() {
 	clientCmd.Flags().StringVarP(&cserver, "server", "s", "127.0.0.1", "remote server addr")
 	clientCmd.Flags().IntVarP(&crp, "remoteport", "r", 12306, "remote server port")
 	clientCmd.Flags().IntVarP(&cloglevel, "loglevel", "g", 2, "log level; 0->panic, 1->fatal, 2->error, 3->warn, 4->info, 5->debug")
-	// clientCmd.Flags().BoolVar(&ccpuprofile, "cpuprofile", false, "begin cpu profile")
 	clientCmd.Flags().IntVar(&ccoreSz, "coresz", 4, "max num of connections with remote server")
 }
 
@@ -34,11 +33,20 @@ var clientCmd = &cobra.Command{
 	Use:   "client",
 	Short: "shark client",
 	Run: func(cmd *cobra.Command, args []string) {
-		log.SetLevel(log.Level(cloglevel))
+		switch enableProfile {
+		case "cpu":
+			defer profile.Start(profile.CPUProfile).Stop()
+		case "mem":
+			defer profile.Start(profile.MemProfile).Stop()
+		case "mutex":
+			defer profile.Start(profile.MutexProfile).Stop()
+		case "block":
+			defer profile.Start(profile.BlockProfile).Stop()
+		case "trace":
+			defer profile.Start(profile.TraceProfile).Stop()
+		}
 
-		// if cpuprofile {
-		// 	defer profile.Start().Stop()
-		// }
+		log.SetLevel(log.Level(cloglevel))
 
 		listener, err := net.Listen("tcp", fmt.Sprintf(":%v", clp))
 		if err != nil {

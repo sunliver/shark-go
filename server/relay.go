@@ -94,7 +94,8 @@ func (r *relay) run() {
 				if r.conn == nil {
 					// not connect remote yet
 					// wrong sequence
-					panic("conn is not init yet")
+					r.log.Errorf("conn is not init yet")
+					return
 				}
 
 				if blockData.Type == block.ConstBlockTypeData {
