@@ -1,6 +1,18 @@
+# golang
 pkg
 bin
+
+# editors and ides
 .vscode/
 .DS_Store
-shark
 .idea/
+
+# package files
+*.zip
+shark
+shark_linux_amd64
+shark_linux_i386
+shark_windows_amd64
+shark_windows_i386
+shark_darwin_amd64
+shark_darwin_i386

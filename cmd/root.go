@@ -7,11 +7,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	Version string
+)
+
 var rootCmd = &cobra.Command{
 	Use:     "shark",
 	Short:   "shark is a proxy server with self-defined protocol",
-	Version: "1.0.0-rc1",
+	Version: Version,
 	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Println(Version)
 	},
 }
 
