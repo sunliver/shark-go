@@ -47,6 +47,13 @@ func (r *relay) run() {
 	defer r.log.Debugf("run routine stop")
 	defer r.release()
 
+	// DecryptBlock may panic
+	defer func() {
+		if err := recover(); err != nil {
+			r.log.Errorf("recover from panic, %v", err)
+		}
+	}()
+
 	for {
 		select {
 		case <-r.ctx.Done():

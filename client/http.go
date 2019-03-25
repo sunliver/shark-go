@@ -1,103 +1,98 @@
 package client
 
 import (
-	"encoding/json"
-	"errors"
+	"bytes"
+	"fmt"
 	"net"
+	"net/url"
 	"strconv"
 	"strings"
 
-	log "github.com/sirupsen/logrus"
 	"github.com/sunliver/shark/lib/block"
 )
 
+var HTTPSuccess = []byte("HTTP/1.1 200 Connection Established\r\n\r\n")
+
 const (
-	constHTTPMethodConnect = "CONNECT"
-	constHTTPSuccess       = "HTTP/1.1 200 Connection Established\r\n\r\n"
+	HTTPMethodConnect = "CONNECT"
 )
-
-var errHTTPDegrade = errors.New("proxy: degrade to HTTP")
-var errBufferFull = errors.New("proxy: buffer full")
-var errBrokenMsg = errors.New("proxy: broken msg")
-
 const (
 	constMaxHeaderSzB = 10 * 1024
 )
 
 type httpProxy struct {
-	pType int
+	https bool
 }
 
-func (p *httpProxy) handShake(conn net.Conn) (blockdata *block.BlockData, remain []byte, err error) {
-	var msg []byte
+func (p *httpProxy) HandShake(conn net.Conn) (data *block.HostData, remain []byte, err error) {
 	var read []byte
-Found:
+	var idx int
+
+	// http max url is 10KB
+	// try to read 1KB to find the first CR
 	for {
-		buf := make([]byte, 2048)
+		buf := make([]byte, 1024)
 		n, err := conn.Read(buf)
 		if err != nil {
-			log.Errorf("[HTTPProxy] invalid handshake msg, read: %v, err: %v", string(read), err)
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("read from conn failed, %v", err)
 		}
-
 		read = append(read, buf[:n]...)
 
-		// stop when reach \r\n\r\n
-		l := len(buf)
-		for k, v := range buf {
-			if v == 0x0a && l > k+2 && buf[k+1] == 0x0d && buf[k+2] == 0x0a {
-				msg = read[:len(read)-n+k+2+1]
-				break Found
-			}
+		idx = bytes.IndexByte(buf, '\n')
+		if idx != -1 {
+			break
 		}
 
 		if len(read) > constMaxHeaderSzB {
-			log.Errorf("[HTTPProxy] read %v header can not find stop words", constMaxHeaderSzB)
-			return nil, nil, errBufferFull
+			return nil, nil, fmt.Errorf("can not find CR, %v", string(read[:100]))
 		}
 	}
 
-	strs := strings.Split(string(msg), " ")
-	if len(strs) < 2 {
-		log.Errorf("[HTTPProxy] Invalid handshake msg, %v", msg)
-		return nil, nil, errBrokenMsg
+	// GET http://example.com:12306/wiki/Proxy_server HTTP/1.1
+	var method, hostAndPort string
+	if _, err := fmt.Sscanf(string(read[:idx]), "%s%s", &method, &hostAndPort); err != nil {
+		return nil, nil, fmt.Errorf("parse method, hostAndPort failed, %v, %v", string(read[:100]), err)
 	}
 
-	if strs[0] != constHTTPMethodConnect {
-		strs[1] = strings.TrimLeft(strs[1], "http://")
-		err = errHTTPDegrade
-		remain = read
-		p.pType = proxyTypeHTTP
+	if method == HTTPMethodConnect || strings.HasPrefix(hostAndPort, "https://") {
+		p.https = true
+		hostAndPort = strings.Replace(hostAndPort, "https://", "", 1)
 	} else {
-		if len(read) > len(msg) {
-			remain = read[len(msg):]
+		u, err := url.Parse(hostAndPort)
+		if err != nil {
+			return nil, nil, fmt.Errorf("parse url failed, %v, %v", string(read[:100]), err)
 		}
-		p.pType = proxyTypeHTTPS
+		hostAndPort = u.Host
 	}
 
-	hosts := strings.SplitN(strs[1], ":", 2)
-	address := strings.SplitN(hosts[0], "/", 2)[0]
-
+	// example.com:22
+	str := strings.SplitN(hostAndPort, ":", 2)
 	port := 80
-	if len(hosts) == 2 {
-		port, _ = strconv.Atoi(hosts[1])
+	addr := str[0]
+	if len(str) > 1 {
+		port, err = strconv.Atoi(str[1])
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid port, %v, %v", str[1], err)
+		}
 	}
 
-	hostdata, _ := json.Marshal(block.HostData{
-		Address: address,
+	return &block.HostData{
+		Address: addr,
 		Port:    uint16(port),
-	})
-
-	return &block.BlockData{
-		Type: block.ConstBlockTypeConnect,
-		Data: []byte(hostdata),
-	}, remain, err
+	}, remain, nil
 }
 
-func (p *httpProxy) handShakeResp() []byte {
-	return []byte(constHTTPSuccess)
+func (p *httpProxy) HandShakeResp() []byte {
+	if p.https {
+		return HTTPSuccess
+	} else {
+		return nil
+	}
 }
 
-func (p *httpProxy) T() int {
-	return p.pType
+func (p *httpProxy) GetProxyType() proxyType {
+	if p.https {
+		return proxyHTTPS
+	}
+	return proxyHTTP
 }

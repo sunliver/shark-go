@@ -2,9 +2,11 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
+	"time"
 
 	uuid "github.com/satori/go.uuid"
 	"github.com/sirupsen/logrus"
@@ -45,58 +47,66 @@ func newAgent(conn net.Conn, p string, r *relay) *agent {
 }
 
 func (a *agent) run() {
-	blockData, remain, err := a.proxy.handShake(a.conn)
-	if err != nil && err != errHTTPDegrade {
+	hostData, remain, err := a.proxy.HandShake(a.conn)
+	if err != nil {
 		a.log.Errorf("get proxy handshake msg failed, %v", err)
 		a.release()
 		return
 	}
 
-	a.log.Debugf("send handshake msg, %v", string(blockData.Data))
+	a.log.Debugf("send handshake msg, %v", hostData)
 
-	blockData.ID = a.ID
-	if len(blockData.Data) > 0 {
-		blockData.Data = a.r.crypto.CryptBlocks(blockData.Data)
-	}
-	a.r.bus <- block.Marshal(blockData)
-
-	// wait connected resp
-	data := <-a.bus
-
-	if data.Type == block.ConstBlockTypeConnected {
-		if a.proxy.T() == proxyTypeHTTPS {
-			resp := a.proxy.handShakeResp()
-			if n, err := a.conn.Write(resp); err != nil || n < len(resp) {
-				a.log.Warnf("write back failed, %v", err)
-				a.release()
-				return
-			}
-		}
-	} else if data.Type == block.ConstBlockTypeConnectFailed {
-		a.log.Errorf("recv connect failed")
-		a.release()
-		return
-	} else {
-		a.log.Warnf("unrecognized block data, %v", blockData)
-		a.release()
-		return
-	}
-
+	connectData, _ := json.Marshal(hostData)
 	a.r.bus <- block.Marshal(&block.BlockData{
 		ID:   a.ID,
-		Type: block.ConstBlockTypeData,
-		Data: a.r.crypto.CryptBlocks(remain),
+		Type: block.ConstBlockTypeConnect,
+		Data: a.r.crypto.CryptBlocks([]byte(connectData)),
 	})
 
-	go a.read()
-	go a.write()
-}
-
-func (a *agent) read() {
-	a.log.Debugf("read routine start")
-	defer a.log.Debugf("read routine stop")
 	defer a.release()
 
+	// waiting for the first connected block
+	select {
+	case data := <-a.bus:
+		if data.Type == block.ConstBlockTypeConnected {
+			if a.proxy.GetProxyType() == proxyHTTPS {
+				resp := a.proxy.HandShakeResp()
+				if n, err := a.conn.Write(resp); err != nil || n < len(resp) {
+					a.log.Warnf("write back failed, %v", err)
+					return
+				}
+			}
+		} else if data.Type == block.ConstBlockTypeConnectFailed {
+			a.log.Warnf("recv connect failed")
+			return
+		} else {
+			a.log.Warnf("unrecognized block data, %v", hostData)
+			return
+		}
+
+		if remain != nil && len(remain) > 0 {
+			a.r.bus <- block.Marshal(&block.BlockData{
+				ID:   a.ID,
+				Type: block.ConstBlockTypeData,
+				Data: a.r.crypto.CryptBlocks(remain),
+			})
+		}
+	case <-time.After(time.Second * 30):
+		a.log.Errorf("wait connected block timeout")
+		return
+	}
+
+	// begin read from remote, then
+	// write to local
+	go a.write()
+
+	// read func is inside run func, then
+	// run func can simply use `defer a.release()` to cleanup
+
+	// begin read from local, then
+	// write to remote
+	a.log.Debugf("read routine start")
+	defer a.log.Debugf("read routine stop")
 	for {
 		select {
 		case <-a.ctx.Done():
@@ -146,6 +156,7 @@ func (a *agent) write() {
 				return
 			} else {
 				a.log.Warnf("unrecognized block type")
+				return
 			}
 		}
 	}
@@ -154,7 +165,7 @@ func (a *agent) write() {
 func (a *agent) release() {
 	a.cancel()
 	a.r.unregisterAgent(a)
-	a.conn.Close()
+	_ = a.conn.Close()
 
 	a.log.Debugf("agent is closed")
 }
