@@ -9,6 +9,10 @@ import (
 	"github.com/sunliver/shark/lib/block"
 )
 
+// https://tools.ietf.org/html/rfc1928
+// https://tools.ietf.org/html/rfc1929
+// https://ftp.icm.edu.pl/packages/socks/socks4/SOCKS4.protocol
+
 // socks4
 // 0x5a: request granted
 // 0x5b: request rejected or failed
@@ -28,10 +32,21 @@ import (
 // X'09' to X'FF' unassigned
 
 type SocksProxy struct {
-	ver  byte
-	Addr []byte
-	Port []byte
+	ver byte
+	*SocksProxyConf
 }
+
+type SocksProxyConf struct {
+	Addr        []byte
+	Port        []byte
+	AuthType    byte
+	Credentials map[string]bool
+}
+
+const (
+	SocksAuthNone     = 0x00
+	SocksAuthUserName = 0x02
+)
 
 func (p *SocksProxy) HandShake(conn net.Conn) (*block.HostData, []byte, error) {
 	ver := make([]byte, 1)
@@ -70,7 +85,7 @@ func (p *SocksProxy) socks5HandShake(conn net.Conn) (*block.HostData, []byte, er
 
 	var found bool
 	for _, v := range methods {
-		if v == 0x00 {
+		if v == p.AuthType {
 			found = true
 			break
 		}
@@ -82,9 +97,45 @@ func (p *SocksProxy) socks5HandShake(conn net.Conn) (*block.HostData, []byte, er
 		return nil, nil, fmt.Errorf("only support No authentication now")
 	}
 
-	// send greet back
+	// send auth negotiation back
 	if n, err := conn.Write([]byte{0x05, 0x00}); err != nil || n != 2 {
 		return nil, nil, fmt.Errorf("err write greet msg, %v", err)
+	}
+
+	if p.AuthType == SocksAuthUserName {
+		// +----+------+----------+------+----------+
+		// |VER | ULEN |  UNAME   | PLEN |  PASSWD  |
+		// +----+------+----------+------+----------+
+		// | 1  |  1   | 1 to 255 |  1   | 1 to 255 |
+		// +----+------+----------+------+----------+
+
+		// first byte is VER
+		ulen := make([]byte, 2)
+		if n, err := io.ReadAtLeast(conn, ulen, len(ulen)); err != nil || n != len(ulen) {
+			return nil, nil, fmt.Errorf("err read ULEN, %v", err)
+		}
+
+		if ulen[0] != 0x05 {
+			return nil, nil, fmt.Errorf("expected socks ver 5, get %v", ulen[0])
+		}
+
+		// least byte is PLEN
+		uname := make([]byte, ulen[1]+1)
+		if n, err := io.ReadAtLeast(conn, uname, len(uname)); err != nil || n != len(uname) {
+			return nil, nil, fmt.Errorf("err read UNAME, %v", err)
+		}
+
+		passwd := make([]byte, uname[len(uname)-1])
+		if n, err := io.ReadAtLeast(conn, passwd, len(passwd)); err != nil || n != len(passwd) {
+			return nil, nil, fmt.Errorf("err read PASSWD, %v", err)
+		}
+
+		if _, ok := p.Credentials[string(uname[:len(uname)-1])+":"+string(passwd)]; !ok {
+			_, _ = conn.Write([]byte{0x05, 0x01})
+			return nil, nil, fmt.Errorf("auth failed")
+		}
+
+		_, _ = conn.Write([]byte{0x05, 0x00})
 	}
 
 	// +----+-----+-------+------+----------+----------+
