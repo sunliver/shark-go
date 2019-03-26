@@ -9,6 +9,13 @@ import (
 	"github.com/sunliver/shark/lib/block"
 )
 
+// socks4
+// 0x5a: request granted
+// 0x5b: request rejected or failed
+// 0x5c: request rejected becasue SOCKS server cannot connect to identd on the client
+// 0x5d: request rejected because the client program and identd report different user-ids
+
+// socks5
 // X'00' succeeded
 // X'01' general SOCKS server failure
 // X'02' connection not allowed by ruleset
@@ -21,28 +28,43 @@ import (
 // X'09' to X'FF' unassigned
 
 type SocksProxy struct {
-	atyp byte
+	ver  byte
 	Addr []byte
 	Port []byte
 }
 
 func (p *SocksProxy) HandShake(conn net.Conn) (*block.HostData, []byte, error) {
+	ver := make([]byte, 1)
+	if n, err := io.ReadAtLeast(conn, ver, len(ver)); err != nil || n != len(ver) {
+		return nil, nil, fmt.Errorf("err read ver, %v", err)
+	}
+
+	p.ver = ver[0]
+	switch ver[0] {
+	case 0x05:
+		return p.socks5HandShake(conn)
+	case 0x04:
+		return p.socks4HandShake(conn)
+	default:
+		return nil, nil, fmt.Errorf("unsupported sock version, %v", ver[0])
+	}
+}
+
+func (p *SocksProxy) socks5HandShake(conn net.Conn) (*block.HostData, []byte, error) {
+	// socks5 first pkt
 	// +----+----------+----------+
 	// |VER | NMETHODS | METHODS  |
 	// +----+----------+----------+
 	// | 1  |    1     | 1 to 255 |
 	// +----+----------+----------+
-	buf := make([]byte, 2)
-	if n, err := io.ReadAtLeast(conn, buf, len(buf)); err != nil || n != len(buf) {
-		return nil, nil, fmt.Errorf("err read sock greet, %v", err)
+
+	numMethods := make([]byte, 1)
+	if n, err := io.ReadAtLeast(conn, numMethods, len(numMethods)); err != nil || n != len(numMethods) {
+		return nil, nil, fmt.Errorf("err read nummethods, %v", err)
 	}
 
-	if buf[0] != 0x05 {
-		return nil, nil, fmt.Errorf("unsupported sock version, %v", buf[0])
-	}
-
-	methods := make([]byte, int(buf[1]))
-	if n, err := io.ReadAtLeast(conn, buf, len(methods)); err != nil || n != len(methods) {
+	methods := make([]byte, int(numMethods[0]))
+	if n, err := io.ReadAtLeast(conn, methods, len(methods)); err != nil || n != len(methods) {
 		return nil, nil, fmt.Errorf("err read sock greet methods, %v", err)
 	}
 
@@ -112,7 +134,6 @@ func (p *SocksProxy) HandShake(conn net.Conn) (*block.HostData, []byte, error) {
 		_, _ = conn.Write([]byte{0x05, 0x07, 0x00})
 		return nil, nil, fmt.Errorf("unsupprt sock CMD, %v", req[1])
 	}
-	p.atyp = req[1]
 
 	addr := make([]byte, l)
 	if n, err := io.ReadAtLeast(conn, addr, len(addr)); err != nil || n != len(addr) {
@@ -129,28 +150,87 @@ func (p *SocksProxy) HandShake(conn net.Conn) (*block.HostData, []byte, error) {
 	}, nil, nil
 }
 
+func (p *SocksProxy) socks4HandShake(conn net.Conn) (*block.HostData, []byte, error) {
+	// 				+----+----+----+----+----+----+----+----+----+----+....+----+
+	// 				| VN | CD | DSTPORT |      DSTIP        | USERID       |NULL|
+	// 				+----+----+----+----+----+----+----+----+----+----+....+----+
+	// # of bytes:	   1    1      2              4           variable       1
+
+	// just set max length of userID up to 1024-1-2-4-1
+	// if not reach EOF, reject the request
+	buf := make([]byte, 1024)
+	// CD+DSTPORT+DSTIP = 7 bytes
+	if n, err := io.ReadAtLeast(conn, buf, 7); err != nil || n == len(buf) {
+		// userID too long
+		_, _ = conn.Write([]byte{0x00, 0x5d, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+		return nil, nil, err
+	}
+
+	buf = buf[:7]
+
+	switch buf[0] {
+	case 0x01:
+		// CONNECT
+		return &block.HostData{
+			Address: net.IP(buf[3:7]).String(),
+			Port:    binary.BigEndian.Uint16(buf[1:3]),
+		}, nil, nil
+	case 0x02:
+		// BIND
+		fallthrough
+	default:
+		_, _ = conn.Write([]byte{0x00, 0x5b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+		return nil, nil, fmt.Errorf("unsupported cmd, %v", buf[0])
+	}
+}
+
 func (p *SocksProxy) HandShakeSuccess(conn net.Conn) error {
-	// +----+-----+-------+------+----------+----------+
-	// |VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
-	// +----+-----+-------+------+----------+----------+
-	// | 1  |  1  | X'00' |  1   | Variable |    2     |
-	// +----+-----+-------+------+----------+----------+
-	resp := []byte{0x05, 0x00, 0x00, p.atyp}
-	resp = append(resp, p.Addr...)
-	resp = append(resp, p.Port...)
-	if n, err := conn.Write(resp); err != nil || n != len(resp) {
+	switch p.ver {
+	case 0x04:
+		// 				+----+----+----+----+----+----+----+----+
+		// 				| VN | CD | DSTPORT |      DSTIP        |
+		// 				+----+----+----+----+----+----+----+----+
+		// # of bytes:	   1    1      2              4
+		resp := []byte{0x00, 0x5a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+		if n, err := conn.Write(resp); err != nil || n != len(resp) {
+			return err
+		}
+		return nil
+	case 0x05:
+		// +----+-----+-------+------+----------+----------+
+		// |VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
+		// +----+-----+-------+------+----------+----------+
+		// | 1  |  1  | X'00' |  1   | Variable |    2     |
+		// +----+-----+-------+------+----------+----------+
+		resp := []byte{0x05, 0x00, 0x00, 0x01}
+		resp = append(resp, p.Addr...)
+		resp = append(resp, p.Port...)
+		_, err := conn.Write(resp)
 		return err
 	}
 	return nil
 }
 
 func (p *SocksProxy) HandShakeFailed(conn net.Conn) error {
-	// Connection refused
-	resp := []byte{0x05, 0x05, 0x00}
-	_, err := conn.Write(resp)
-	return err
+	switch p.ver {
+	case 0x04:
+		resp := []byte{0x00, 0x5b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+		_, err := conn.Write(resp)
+		return err
+	case 0x05:
+		// Connection refused
+		resp := []byte{0x05, 0x05, 0x00}
+		_, err := conn.Write(resp)
+		return err
+	}
+	return nil
+
 }
 
 func (p *SocksProxy) GetProxyType() ProxyType {
-	return proxySocks5
+	if p.ver == 0x04 {
+		return proxySocks4
+	} else {
+		return proxySocks5
+	}
 }

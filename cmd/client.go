@@ -23,9 +23,9 @@ var ccoreSz int
 func init() {
 	rootCmd.AddCommand(clientCmd)
 
-	clientCmd.Flags().StringVar(&claddr, "local-addr", "127.0.0.1", "local addr to listen")
+	clientCmd.Flags().StringVar(&claddr, "local-addr", "127.0.0.1", "local addr to listen. (currently only support ipv4 addr)")
 	clientCmd.Flags().IntVar(&clport, "local-port", 10087, "local proxy port")
-	clientCmd.Flags().StringVar(&cprotocol, "protocol", "http", "local proxy protocol, http or socks5")
+	clientCmd.Flags().StringVar(&cprotocol, "protocol", "http", "local proxy protocol, http or socks(4 and 5 is supported)")
 	clientCmd.Flags().StringVar(&craddr, "remote-addr", "127.0.0.1", "remote server addr")
 	clientCmd.Flags().IntVar(&crport, "remote-port", 12306, "remote server port")
 	clientCmd.Flags().IntVar(&cloglevel, "log-level", 2, "log level; 0->panic, 1->fatal, 2->error, 3->warn, 4->info, 5->debug")
@@ -68,7 +68,7 @@ var clientCmd = &cobra.Command{
 			var proxy client.Proxy
 			if cprotocol == "http" {
 				proxy = &client.HttpProxy{}
-			} else if cprotocol == "socks5" {
+			} else if cprotocol == "socks" {
 				buf := make([]byte, 2)
 				binary.BigEndian.PutUint16(buf, uint16(clport))
 				proxy = &client.SocksProxy{

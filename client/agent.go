@@ -54,7 +54,7 @@ func (a *agent) run() {
 		return
 	}
 
-	a.log.Debugf("send handshake msg, %v", hostData)
+	a.log.Infof("send handshake msg, %v", hostData)
 
 	connectData, _ := json.Marshal(hostData)
 	a.r.bus <- block.Marshal(&block.BlockData{
