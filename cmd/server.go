@@ -20,8 +20,8 @@ func init() {
 	rootCmd.AddCommand(serverCmd)
 
 	serverCmd.Flags().IntVarP(&sPort, "port", "p", 12306, "bind port default=12306")
-	serverCmd.Flags().StringVarP(&sAddr, "addr", "a", "127.0.0.1", "bind address default=127.0.0.1")
-	serverCmd.Flags().IntVarP(&sLoglevel, "loglevel", "g", 2, "log level; 0->panic, 1->fatal, 2->error, 3->warn, 4->info, 5->debug")
+	serverCmd.Flags().StringVar(&sAddr, "addr", "127.0.0.1", "bind address default=127.0.0.1")
+	serverCmd.Flags().IntVar(&sLoglevel, "log-level", 2, "log level; 0->panic, 1->fatal, 2->error, 3->warn, 4->info, 5->debug")
 }
 
 var serverCmd = &cobra.Command{

@@ -6,19 +6,20 @@ import (
 	"github.com/sunliver/shark/lib/block"
 )
 
-type proxyType int
+type ProxyType int
 
 const (
-	proxyHTTP   proxyType = iota
-	proxyHTTPS  proxyType = iota
-	proxySocks4 proxyType = iota
-	proxySocks5 proxyType = iota
+	proxyHTTP   ProxyType = iota
+	proxyHTTPS  ProxyType = iota
+	proxySocks4 ProxyType = iota
+	proxySocks5 ProxyType = iota
 )
 
-type proxy interface {
-	// HandShake returns proxy handshake msg
-	HandShake(conn net.Conn) (*block.HostData, []byte, error)
-	// HandShakeResp returns proxy handshake resp msg
-	HandShakeResp() []byte
-	GetProxyType() proxyType
+type Proxy interface {
+	// HandShake returns Proxy handshake msg
+	HandShake(net.Conn) (*block.HostData, []byte, error)
+	// HandShakeResp returns Proxy handshake resp msg
+	HandShakeSuccess(net.Conn) error
+	HandShakeFailed(net.Conn) error
+	GetProxyType() ProxyType
 }

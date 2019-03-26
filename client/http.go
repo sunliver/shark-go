@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -20,11 +21,11 @@ const (
 	constMaxHeaderSzB = 10 * 1024
 )
 
-type httpProxy struct {
+type HttpProxy struct {
 	https bool
 }
 
-func (p *httpProxy) HandShake(conn net.Conn) (data *block.HostData, remain []byte, err error) {
+func (p *HttpProxy) HandShake(conn net.Conn) (data *block.HostData, remain []byte, err error) {
 	var read []byte
 	var idx int
 
@@ -72,7 +73,7 @@ func (p *httpProxy) HandShake(conn net.Conn) (data *block.HostData, remain []byt
 	if len(str) > 1 {
 		port, err = strconv.Atoi(str[1])
 		if err != nil {
-			return nil, nil, fmt.Errorf("invalid port, %v, %v", str[1], err)
+			return nil, nil, fmt.Errorf("invalid Port, %v, %v", str[1], err)
 		}
 	}
 
@@ -82,15 +83,25 @@ func (p *httpProxy) HandShake(conn net.Conn) (data *block.HostData, remain []byt
 	}, remain, nil
 }
 
-func (p *httpProxy) HandShakeResp() []byte {
+func (p *HttpProxy) HandShakeSuccess(conn net.Conn) error {
 	if p.https {
-		return HTTPSuccess
+		if n, err := conn.Write(HTTPSuccess); err != nil {
+			return err
+		} else if n != len(HTTPSuccess) {
+			return errors.New("write HTTPSuccess failed")
+		} else {
+			return nil
+		}
 	} else {
 		return nil
 	}
 }
 
-func (p *httpProxy) GetProxyType() proxyType {
+func (p *HttpProxy) HandShakeFailed(net.Conn) error {
+	return nil
+}
+
+func (p *HttpProxy) GetProxyType() ProxyType {
 	if p.https {
 		return proxyHTTPS
 	}

@@ -67,7 +67,7 @@ func newRelay(ctx context.Context, remote string) (*relay, error) {
 	return r, nil
 }
 
-// handshake do handshake with remote proxy server
+// handshake do handshake with remote Proxy server
 func (c *relay) handshake() error {
 	// step1: send syn
 	{

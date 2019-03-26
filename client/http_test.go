@@ -13,7 +13,7 @@ func TestHttpProxy_HTTPHandShake(t *testing.T) {
 		_ = s.Close()
 	}()
 
-	p := httpProxy{}
+	p := HttpProxy{}
 	data, remain, err := p.HandShake(c)
 	if err != nil {
 		t.Errorf("handshake err, %v", err)
@@ -45,7 +45,7 @@ func TestHttpProxy_HTTPSHandShake(t *testing.T) {
 		_ = s.Close()
 	}()
 
-	p := httpProxy{}
+	p := HttpProxy{}
 	data, remain, err := p.HandShake(c)
 	if err != nil {
 		t.Errorf("handshake err, %v", err)

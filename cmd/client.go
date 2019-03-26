@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/binary"
 	"fmt"
 	"net"
 
@@ -11,21 +12,23 @@ import (
 	"github.com/sunliver/shark/client"
 )
 
-var clp int
+var claddr string
+var clport int
 var cprotocol string
-var cserver string
-var crp int
+var craddr string
+var crport int
 var cloglevel int
 var ccoreSz int
 
 func init() {
 	rootCmd.AddCommand(clientCmd)
 
-	clientCmd.Flags().IntVarP(&clp, "localport", "l", 10087, "local proxy port")
-	clientCmd.Flags().StringVarP(&cprotocol, "protocol", "p", "http", "local proxy protocol, currently only support http")
-	clientCmd.Flags().StringVarP(&cserver, "server", "s", "127.0.0.1", "remote server addr")
-	clientCmd.Flags().IntVarP(&crp, "remoteport", "r", 12306, "remote server port")
-	clientCmd.Flags().IntVarP(&cloglevel, "loglevel", "g", 2, "log level; 0->panic, 1->fatal, 2->error, 3->warn, 4->info, 5->debug")
+	clientCmd.Flags().StringVar(&claddr, "local-addr", "127.0.0.1", "local addr to listen")
+	clientCmd.Flags().IntVar(&clport, "local-port", 10087, "local proxy port")
+	clientCmd.Flags().StringVar(&cprotocol, "protocol", "http", "local proxy protocol, http or socks5")
+	clientCmd.Flags().StringVar(&craddr, "remote-addr", "127.0.0.1", "remote server addr")
+	clientCmd.Flags().IntVar(&crport, "remote-port", 12306, "remote server port")
+	clientCmd.Flags().IntVar(&cloglevel, "log-level", 2, "log level; 0->panic, 1->fatal, 2->error, 3->warn, 4->info, 5->debug")
 	clientCmd.Flags().IntVar(&ccoreSz, "coresz", 4, "max num of connections with remote server")
 }
 
@@ -48,13 +51,13 @@ var clientCmd = &cobra.Command{
 
 		log.SetLevel(log.Level(cloglevel))
 
-		listener, err := net.Listen("tcp", fmt.Sprintf(":%v", clp))
+		listener, err := net.Listen("tcp", fmt.Sprintf("%v:%v", claddr, clport))
 		if err != nil {
 			panic(fmt.Errorf("start client failed, %v", err))
 		}
-		log.Infof("local port: %v, remote: %v:%v", clp, cserver, crp)
+		log.Infof("listen %v:%v, remote: %v:%v", claddr, clport, craddr, crport)
 
-		m := client.NewManager(ccoreSz, fmt.Sprintf("%v:%v", cserver, crp))
+		m := client.NewManager(ccoreSz, fmt.Sprintf("%v:%v", craddr, crport))
 		for {
 			conn, err := listener.Accept()
 			if err != nil {
@@ -62,7 +65,19 @@ var clientCmd = &cobra.Command{
 				continue
 			}
 
-			go m.Run(conn, "http")
+			var proxy client.Proxy
+			if cprotocol == "http" {
+				proxy = &client.HttpProxy{}
+			} else if cprotocol == "socks5" {
+				buf := make([]byte, 2)
+				binary.BigEndian.PutUint16(buf, uint16(clport))
+				proxy = &client.SocksProxy{
+					Addr: net.ParseIP(claddr).To4(),
+					Port: buf,
+				}
+			}
+
+			go m.Run(conn, proxy)
 		}
 	},
 }

@@ -24,17 +24,17 @@ type agent struct {
 	r      *relay
 	ctx    context.Context
 	cancel func()
-	proxy  proxy
+	proxy  Proxy
 	log    logrus.FieldLogger
 	bus    chan *block.BlockData
 }
 
-func newAgent(conn net.Conn, p string, r *relay) *agent {
+func newAgent(conn net.Conn, p Proxy, r *relay) *agent {
 	c, cancel := context.WithCancel(r.ctx)
 	id := block.NewGUID()
 	a := &agent{
 		ID:     id,
-		proxy:  &httpProxy{},
+		proxy:  p,
 		conn:   conn,
 		ctx:    c,
 		cancel: cancel,
@@ -49,7 +49,7 @@ func newAgent(conn net.Conn, p string, r *relay) *agent {
 func (a *agent) run() {
 	hostData, remain, err := a.proxy.HandShake(a.conn)
 	if err != nil {
-		a.log.Errorf("get proxy handshake msg failed, %v", err)
+		a.log.Errorf("get Proxy handshake msg failed, %v", err)
 		a.release()
 		return
 	}
@@ -69,14 +69,12 @@ func (a *agent) run() {
 	select {
 	case data := <-a.bus:
 		if data.Type == block.ConstBlockTypeConnected {
-			if a.proxy.GetProxyType() == proxyHTTPS {
-				resp := a.proxy.HandShakeResp()
-				if n, err := a.conn.Write(resp); err != nil || n < len(resp) {
-					a.log.Warnf("write back failed, %v", err)
-					return
-				}
+			if err := a.proxy.HandShakeSuccess(a.conn); err != nil {
+				a.log.Infof("handshake success failed, %v", err)
+				return
 			}
 		} else if data.Type == block.ConstBlockTypeConnectFailed {
+			_ = a.proxy.HandShakeFailed(a.conn)
 			a.log.Warnf("recv connect failed")
 			return
 		} else {

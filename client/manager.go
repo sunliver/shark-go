@@ -46,15 +46,15 @@ func NewManager(coreSz int, remote string) *Manager {
 	}
 }
 
-// Run accept a new conn with target proxy protocol
-func (m *Manager) Run(conn net.Conn, protocol string) {
+// Run accept a new conn with target Proxy protocol
+func (m *Manager) Run(conn net.Conn, p Proxy) {
 	c, err := m.getClient()
 	if err != nil {
 		conn.Close()
 		return
 	}
 
-	a := newAgent(conn, protocol, c)
+	a := newAgent(conn, p, c)
 	a.run()
 }
 
