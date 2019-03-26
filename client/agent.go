@@ -47,7 +47,7 @@ func newAgent(conn net.Conn, p Proxy, r *relay) *agent {
 }
 
 func (a *agent) run() {
-	hostData, remain, err := a.proxy.HandShake(a.conn)
+	hostData, err := a.proxy.HandShake(a.conn)
 	if err != nil {
 		a.log.Errorf("get Proxy handshake msg failed, %v", err)
 		a.release()
@@ -82,12 +82,16 @@ func (a *agent) run() {
 			return
 		}
 
-		if remain != nil && len(remain) > 0 {
-			a.r.bus <- block.Marshal(&block.BlockData{
-				ID:   a.ID,
-				Type: block.ConstBlockTypeData,
-				Data: a.r.crypto.CryptBlocks(remain),
-			})
+		if a.proxy.GetProxyType() == proxyHTTP {
+			p, _ := a.proxy.(*HttpProxy)
+			remain := p.remain
+			if remain != nil && len(remain) > 0 {
+				a.r.bus <- block.Marshal(&block.BlockData{
+					ID:   a.ID,
+					Type: block.ConstBlockTypeData,
+					Data: a.r.crypto.CryptBlocks(remain),
+				})
+			}
 		}
 	case <-time.After(time.Second * 30):
 		a.log.Errorf("wait connected block timeout")

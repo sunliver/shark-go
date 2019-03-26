@@ -48,10 +48,10 @@ const (
 	SocksAuthUserName = 0x02
 )
 
-func (p *SocksProxy) HandShake(conn net.Conn) (*block.HostData, []byte, error) {
+func (p *SocksProxy) HandShake(conn net.Conn) (*block.HostData, error) {
 	ver := make([]byte, 1)
 	if n, err := io.ReadAtLeast(conn, ver, len(ver)); err != nil || n != len(ver) {
-		return nil, nil, fmt.Errorf("err read ver, %v", err)
+		return nil, fmt.Errorf("err read ver, %v", err)
 	}
 
 	p.ver = ver[0]
@@ -61,11 +61,11 @@ func (p *SocksProxy) HandShake(conn net.Conn) (*block.HostData, []byte, error) {
 	case 0x04:
 		return p.socks4HandShake(conn)
 	default:
-		return nil, nil, fmt.Errorf("unsupported sock version, %v", ver[0])
+		return nil, fmt.Errorf("unsupported sock version, %v", ver[0])
 	}
 }
 
-func (p *SocksProxy) socks5HandShake(conn net.Conn) (*block.HostData, []byte, error) {
+func (p *SocksProxy) socks5HandShake(conn net.Conn) (*block.HostData, error) {
 	// socks5 first pkt
 	// +----+----------+----------+
 	// |VER | NMETHODS | METHODS  |
@@ -75,12 +75,12 @@ func (p *SocksProxy) socks5HandShake(conn net.Conn) (*block.HostData, []byte, er
 
 	numMethods := make([]byte, 1)
 	if n, err := io.ReadAtLeast(conn, numMethods, len(numMethods)); err != nil || n != len(numMethods) {
-		return nil, nil, fmt.Errorf("err read nummethods, %v", err)
+		return nil, fmt.Errorf("err read nummethods, %v", err)
 	}
 
 	methods := make([]byte, int(numMethods[0]))
 	if n, err := io.ReadAtLeast(conn, methods, len(methods)); err != nil || n != len(methods) {
-		return nil, nil, fmt.Errorf("err read sock greet methods, %v", err)
+		return nil, fmt.Errorf("err read sock greet methods, %v", err)
 	}
 
 	var found bool
@@ -94,12 +94,12 @@ func (p *SocksProxy) socks5HandShake(conn net.Conn) (*block.HostData, []byte, er
 	if !found {
 		// no acceptable methods were offered
 		_, _ = conn.Write([]byte{0x05, 0xFF})
-		return nil, nil, fmt.Errorf("only support No authentication now")
+		return nil, fmt.Errorf("only support No authentication now")
 	}
 
 	// send auth negotiation back
 	if n, err := conn.Write([]byte{0x05, 0x00}); err != nil || n != 2 {
-		return nil, nil, fmt.Errorf("err write greet msg, %v", err)
+		return nil, fmt.Errorf("err write greet msg, %v", err)
 	}
 
 	if p.AuthType == SocksAuthUserName {
@@ -112,27 +112,27 @@ func (p *SocksProxy) socks5HandShake(conn net.Conn) (*block.HostData, []byte, er
 		// first byte is VER
 		ulen := make([]byte, 2)
 		if n, err := io.ReadAtLeast(conn, ulen, len(ulen)); err != nil || n != len(ulen) {
-			return nil, nil, fmt.Errorf("err read ULEN, %v", err)
+			return nil, fmt.Errorf("err read ULEN, %v", err)
 		}
 
 		if ulen[0] != 0x05 {
-			return nil, nil, fmt.Errorf("expected socks ver 5, get %v", ulen[0])
+			return nil, fmt.Errorf("expected socks ver 5, get %v", ulen[0])
 		}
 
 		// least byte is PLEN
 		uname := make([]byte, ulen[1]+1)
 		if n, err := io.ReadAtLeast(conn, uname, len(uname)); err != nil || n != len(uname) {
-			return nil, nil, fmt.Errorf("err read UNAME, %v", err)
+			return nil, fmt.Errorf("err read UNAME, %v", err)
 		}
 
 		passwd := make([]byte, uname[len(uname)-1])
 		if n, err := io.ReadAtLeast(conn, passwd, len(passwd)); err != nil || n != len(passwd) {
-			return nil, nil, fmt.Errorf("err read PASSWD, %v", err)
+			return nil, fmt.Errorf("err read PASSWD, %v", err)
 		}
 
 		if _, ok := p.Credentials[string(uname[:len(uname)-1])+":"+string(passwd)]; !ok {
 			_, _ = conn.Write([]byte{0x05, 0x01})
-			return nil, nil, fmt.Errorf("auth failed")
+			return nil, fmt.Errorf("auth failed")
 		}
 
 		_, _ = conn.Write([]byte{0x05, 0x00})
@@ -146,11 +146,11 @@ func (p *SocksProxy) socks5HandShake(conn net.Conn) (*block.HostData, []byte, er
 
 	req := make([]byte, 4)
 	if n, err := io.ReadAtLeast(conn, req, len(req)); err != nil || n != len(req) {
-		return nil, nil, fmt.Errorf("read req header failed, %v", err)
+		return nil, fmt.Errorf("read req header failed, %v", err)
 	}
 
 	if req[0] != 0x05 {
-		return nil, nil, fmt.Errorf("unsupport sock version, %v", req[0])
+		return nil, fmt.Errorf("unsupport sock version, %v", req[0])
 	}
 
 	var l int
@@ -165,14 +165,14 @@ func (p *SocksProxy) socks5HandShake(conn net.Conn) (*block.HostData, []byte, er
 			// domain name
 			t := make([]byte, 1)
 			if n, err := io.ReadAtLeast(conn, t, len(t)); err != nil || n != len(t) {
-				return nil, nil, fmt.Errorf("read domain name len failed, %v", err)
+				return nil, fmt.Errorf("read domain name len failed, %v", err)
 			}
 			l = int(t[0])
 		case 0x04:
 			// ipv6
 			l = 16
 		default:
-			return nil, nil, fmt.Errorf("unrecognized ATYP field, %v", req[1])
+			return nil, fmt.Errorf("unrecognized ATYP field, %v", req[1])
 		}
 	case 0x02:
 		// BIND
@@ -183,25 +183,25 @@ func (p *SocksProxy) socks5HandShake(conn net.Conn) (*block.HostData, []byte, er
 	default:
 		// Command not supported
 		_, _ = conn.Write([]byte{0x05, 0x07, 0x00})
-		return nil, nil, fmt.Errorf("unsupprt sock CMD, %v", req[1])
+		return nil, fmt.Errorf("unsupprt sock CMD, %v", req[1])
 	}
 
 	addr := make([]byte, l)
 	if n, err := io.ReadAtLeast(conn, addr, len(addr)); err != nil || n != len(addr) {
-		return nil, nil, fmt.Errorf("read DST.ADDR failed, %v", err)
+		return nil, fmt.Errorf("read DST.ADDR failed, %v", err)
 	}
 	port := make([]byte, 2)
 	if n, err := io.ReadAtLeast(conn, port, len(port)); err != nil || n != len(port) {
-		return nil, nil, fmt.Errorf("read DST.PORT failed, %v", err)
+		return nil, fmt.Errorf("read DST.PORT failed, %v", err)
 	}
 
 	return &block.HostData{
 		Address: net.IP(addr).String(),
 		Port:    binary.BigEndian.Uint16(port),
-	}, nil, nil
+	}, nil
 }
 
-func (p *SocksProxy) socks4HandShake(conn net.Conn) (*block.HostData, []byte, error) {
+func (p *SocksProxy) socks4HandShake(conn net.Conn) (*block.HostData, error) {
 	// 				+----+----+----+----+----+----+----+----+----+----+....+----+
 	// 				| VN | CD | DSTPORT |      DSTIP        | USERID       |NULL|
 	// 				+----+----+----+----+----+----+----+----+----+----+....+----+
@@ -214,7 +214,7 @@ func (p *SocksProxy) socks4HandShake(conn net.Conn) (*block.HostData, []byte, er
 	if n, err := io.ReadAtLeast(conn, buf, 7); err != nil || n == len(buf) {
 		// userID too long
 		_, _ = conn.Write([]byte{0x00, 0x5d, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
-		return nil, nil, err
+		return nil, err
 	}
 
 	buf = buf[:7]
@@ -225,13 +225,13 @@ func (p *SocksProxy) socks4HandShake(conn net.Conn) (*block.HostData, []byte, er
 		return &block.HostData{
 			Address: net.IP(buf[3:7]).String(),
 			Port:    binary.BigEndian.Uint16(buf[1:3]),
-		}, nil, nil
+		}, nil
 	case 0x02:
 		// BIND
 		fallthrough
 	default:
 		_, _ = conn.Write([]byte{0x00, 0x5b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
-		return nil, nil, fmt.Errorf("unsupported cmd, %v", buf[0])
+		return nil, fmt.Errorf("unsupported cmd, %v", buf[0])
 	}
 }
 
@@ -275,7 +275,6 @@ func (p *SocksProxy) HandShakeFailed(conn net.Conn) error {
 		return err
 	}
 	return nil
-
 }
 
 func (p *SocksProxy) GetProxyType() ProxyType {

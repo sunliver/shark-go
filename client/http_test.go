@@ -14,7 +14,7 @@ func TestHttpProxy_HTTPHandShake(t *testing.T) {
 	}()
 
 	p := HttpProxy{}
-	data, remain, err := p.HandShake(c)
+	data, err := p.HandShake(c)
 	if err != nil {
 		t.Errorf("handshake err, %v", err)
 		t.FailNow()
@@ -22,11 +22,6 @@ func TestHttpProxy_HTTPHandShake(t *testing.T) {
 
 	if p.GetProxyType() != proxyHTTP {
 		t.Errorf("handshake parse http schema failed")
-		t.FailNow()
-	}
-
-	if remain != nil {
-		t.Errorf("handshake parse http remain failed")
 		t.FailNow()
 	}
 
@@ -46,7 +41,7 @@ func TestHttpProxy_HTTPSHandShake(t *testing.T) {
 	}()
 
 	p := HttpProxy{}
-	data, remain, err := p.HandShake(c)
+	data, err := p.HandShake(c)
 	if err != nil {
 		t.Errorf("handshake err, %v", err)
 		t.FailNow()
@@ -54,11 +49,6 @@ func TestHttpProxy_HTTPSHandShake(t *testing.T) {
 
 	if p.GetProxyType() != proxyHTTPS {
 		t.Errorf("handshake parse https schema failed")
-		t.FailNow()
-	}
-
-	if remain != nil {
-		t.Errorf("handshake parse https remain failed")
 		t.FailNow()
 	}
 

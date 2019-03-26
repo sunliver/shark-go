@@ -17,7 +17,7 @@ const (
 
 type Proxy interface {
 	// HandShake returns Proxy handshake msg
-	HandShake(net.Conn) (*block.HostData, []byte, error)
+	HandShake(net.Conn) (*block.HostData, error)
 	// HandShakeResp returns Proxy handshake resp msg
 	HandShakeSuccess(net.Conn) error
 	HandShakeFailed(net.Conn) error
