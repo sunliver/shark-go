@@ -1,30 +1,29 @@
 package client
 
 import (
-	"container/list"
 	"context"
 	"fmt"
 	"net"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sirupsen/logrus"
 )
 
 // Manager relay pool manager
-// TODO add idle timeout and remove the relay
 type Manager struct {
-	ctx        context.Context
-	clients    *list.List
-	remote     string
-	coreSz     int
-	retryCnt   int
-	retryDelay time.Duration
-	mutex      sync.Mutex
-	cancel     func()
-	log        logrus.FieldLogger
+	ctx    context.Context
+	cancel func()
+	slots  []*relay
+	ticket *uint32
+	mu     sync.Mutex
+	remote string
+	log    logrus.FieldLogger
 }
+
+const maxCoreSz = 100
 
 // NewManager init relay pool manager with a fixed size
 func NewManager(coreSz int, remote string) *Manager {
@@ -34,15 +33,17 @@ func NewManager(coreSz int, remote string) *Manager {
 		coreSz = runtime.NumCPU()
 	}
 
+	if coreSz > maxCoreSz {
+		coreSz = maxCoreSz
+	}
+
 	return &Manager{
-		ctx:        c,
-		clients:    list.New(),
-		remote:     remote,
-		coreSz:     coreSz,
-		retryCnt:   5,
-		retryDelay: time.Second * 1,
-		cancel:     cancel,
-		log:        logrus.WithField("manager", "1"),
+		ctx:    c,
+		cancel: cancel,
+		slots:  make([]*relay, coreSz),
+		ticket: new(uint32),
+		remote: remote,
+		log:    logrus.WithField("manager", "1"),
 	}
 }
 
@@ -50,7 +51,7 @@ func NewManager(coreSz int, remote string) *Manager {
 func (m *Manager) Start(conn net.Conn, p Proxy) {
 	c, err := m.getClient()
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return
 	}
 
@@ -58,63 +59,43 @@ func (m *Manager) Start(conn net.Conn, p Proxy) {
 	a.start()
 }
 
+// getClient return a relay which is ready to recv connections
+func (m *Manager) getClient() (*relay, error) {
+	// fast path: if current slot is ready, return it
+	ticket := atomic.AddUint32(m.ticket, 1) - 1
+	idx := ticket % uint32(len(m.slots))
+	if r := m.slots[idx]; r != nil && r.closed != true {
+		return r, nil
+	}
+
+	// slow path: create a new relay
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// double check
+	// other routine may create the relay
+	if r := m.slots[idx]; r != nil && r.closed != true {
+		return r, nil
+	}
+
+	retryCnt := 5
+	retryDelay := time.Second * 1
+
+	for i := 0; i < retryCnt; i++ {
+		r, err := newRelay(m.ctx, m.remote)
+		if err != nil {
+			time.Sleep(retryDelay)
+			m.log.Errorf("retry %v: init client failed, %v", i, err)
+			continue
+		}
+
+		m.slots[idx] = r
+
+		return r, nil
+	}
+	return nil, fmt.Errorf("connect with remote failed too many times")
+}
+
 // Cancel cancel all hold relay
 func (m *Manager) Cancel() {
 	m.cancel()
-}
-
-// getClient return a relay which is ready to recv connections
-func (m *Manager) getClient() (*relay, error) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
-	// rm closed relay
-	if m.clients.Len() > 0 {
-		e := m.clients.Front()
-		for {
-			n := e.Next()
-			r, ok := e.Value.(*relay)
-			if !ok || r.closed {
-				m.clients.Remove(e)
-			}
-			if n == nil {
-				break
-			}
-			e = n
-		}
-	}
-
-	// reinit relay pool
-	if m.clients.Len() < m.coreSz {
-		if err := m.initPool(); err != nil {
-			return nil, err
-		}
-	}
-
-	e := m.clients.Front()
-	m.clients.PushBack(e)
-
-	return e.Value.(*relay), nil
-}
-
-func (m *Manager) initPool() error {
-	for m.clients.Len() < m.coreSz {
-		i := 0
-		for ; i < m.retryCnt; i++ {
-			r, err := newRelay(m.ctx, m.remote)
-			if err != nil {
-				time.Sleep(m.retryDelay)
-				m.log.Errorf("retry %v: init client failed, %v", i, err)
-				continue
-			}
-
-			m.clients.PushBack(r)
-			break
-		}
-		if i == m.retryCnt {
-			return fmt.Errorf("init client failed too manay times")
-		}
-	}
-
-	return nil
 }
