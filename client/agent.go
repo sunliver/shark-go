@@ -46,7 +46,7 @@ func newAgent(conn net.Conn, p Proxy, r *relay) *agent {
 	return a
 }
 
-func (a *agent) run() {
+func (a *agent) start() {
 	hostData, err := a.proxy.HandShake(a.conn)
 	if err != nil {
 		a.log.Errorf("get Proxy handshake msg failed, %v", err)
@@ -84,12 +84,11 @@ func (a *agent) run() {
 
 		if a.proxy.GetProxyType() == proxyHTTP {
 			p, _ := a.proxy.(*HttpProxy)
-			remain := p.remain
-			if remain != nil && len(remain) > 0 {
+			if p.remain != nil && len(p.remain) > 0 {
 				a.r.bus <- block.Marshal(&block.BlockData{
 					ID:   a.ID,
 					Type: block.ConstBlockTypeData,
-					Data: a.r.crypto.CryptBlocks(remain),
+					Data: a.r.crypto.CryptBlocks(p.remain),
 				})
 			}
 		}
@@ -102,8 +101,8 @@ func (a *agent) run() {
 	// write to local
 	go a.write()
 
-	// read func is inside run func, then
-	// run func can simply use `defer a.release()` to cleanup
+	// read func is inside start func, then
+	// start func can simply use `defer a.release()` to cleanup
 
 	// begin read from local, then
 	// write to remote

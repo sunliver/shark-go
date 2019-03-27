@@ -67,7 +67,6 @@ func (p *HttpProxy) HandShake(conn net.Conn) (data *block.HostData, err error) {
 			return nil, fmt.Errorf("parse url failed, %v, %v", string(read[:100]), err)
 		}
 		hostAndPort = u.Host
-		// \r\n\r\n
 		p.remain = read
 	}
 

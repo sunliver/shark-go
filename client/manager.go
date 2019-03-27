@@ -46,8 +46,8 @@ func NewManager(coreSz int, remote string) *Manager {
 	}
 }
 
-// Run accept a new conn with target Proxy protocol
-func (m *Manager) Run(conn net.Conn, p Proxy) {
+// Start accept a new conn with target Proxy protocol
+func (m *Manager) Start(conn net.Conn, p Proxy) {
 	c, err := m.getClient()
 	if err != nil {
 		conn.Close()
@@ -55,7 +55,7 @@ func (m *Manager) Run(conn net.Conn, p Proxy) {
 	}
 
 	a := newAgent(conn, p, c)
-	a.run()
+	a.start()
 }
 
 // Cancel cancel all hold relay
